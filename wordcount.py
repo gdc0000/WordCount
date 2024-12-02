@@ -181,8 +181,15 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame, label: str
 
 def main():
     # Configure Streamlit page
-    st.set_page_config(page_title="LIWC Textual Analysis App", layout="wide")
-    st.title("📊 LIWC Textual Analysis App")
+    st.set_page_config(page_title="TextInsight Analyzer", layout="wide")
+    st.title("📊 TextInsight Analyzer")
+    
+    # Disclaimer
+    st.markdown("""
+    ---
+    **Disclaimer:** This application is an amateur replication inspired by proprietary software for educational and research purposes only. It is not affiliated with or endorsed by the creators of the original software. Performance and features may vary and are not comparable to the official tool.
+    ---
+    """)
     
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
@@ -224,7 +231,7 @@ def main():
                     
                     # Start Analysis Button
                     if st.button("🚀 Start Analysis"):
-                        with st.spinner("🔄 Performing Textual Analysis..."):
+                        with st.spinner("🔄 Performing Textual Analysis... This may take a while for large datasets."):
                             documents = dataset[text_column].astype(str)
                             progress_bar = st.progress(0)
                             analysis_df = analyze_text(documents, exact_words, wildcard_prefixes, progress_bar)
@@ -248,5 +255,11 @@ def main():
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
 
+    # Footer with disclaimer
+    st.markdown("""
+    ---
+    **Note:** This tool is intended for educational and research purposes only. It is a simplified version and does not offer the comprehensive features or performance of professional-grade software.
+    """)
+    
 if __name__ == "__main__":
     main()
