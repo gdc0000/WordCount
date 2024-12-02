@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import re
 from typing import List, Tuple
+from collections import Counter
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
 
 # =========================
 #        FUNCTIONS
@@ -148,7 +151,8 @@ def analyze_text(documents: pd.Series, exact_words: set, wildcard_prefixes: List
         })
         # Update progress every 100 documents or at the end
         if (i + 1) % 100 == 0 or i == total_docs -1:
-            progress_bar.progress((i + 1) / total_docs)
+            progress = (i + 1) / total_docs
+            progress_bar.progress(progress)
     analysis_df = pd.DataFrame(analysis_results)
     return analysis_df
 
@@ -174,6 +178,36 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame, label: str
     })
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
+
+def generate_wordcloud(detected_words_series: pd.Series, label: str) -> None:
+    """
+    Generate and display a word cloud from detected words.
+    
+    Parameters:
+        detected_words_series: pandas Series containing lists of detected words.
+        label: Label/category name for the wordlist.
+    """
+    # Flatten the list of detected words
+    all_detected_words = [word for sublist in detected_words_series for word in sublist]
+    if not all_detected_words:
+        st.warning("No words detected to generate a word cloud.")
+        return
+    
+    # Count word frequencies
+    word_counts = Counter(all_detected_words)
+    
+    # Generate word cloud
+    wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(word_counts)
+    
+    # Plotting the word cloud using matplotlib
+    plt.figure(figsize=(15, 7.5))
+    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.axis('off')
+    plt.title(f"🖼️ Word Cloud for '{label}'", fontsize=20)
+    plt.tight_layout(pad=0)
+    
+    # Display the word cloud in Streamlit
+    st.pyplot(plt)
 
 # =========================
 #        STREAMLIT APP
@@ -254,16 +288,23 @@ def main():
                                 file_name="enhanced_dataset.csv",
                                 mime="text/csv",
                             )
+                            
+                            # Generate and display word cloud
+                            st.subheader("🌐 Word Cloud of Detected Words")
+                            generate_wordcloud(enhanced_dataset[f"{label}_detected_words"], label)
             else:
                 st.info("📝 Please enter a label for the wordlist.")
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
-
-    # Footer with disclaimer
+    
+    # Footer
     st.markdown("""
     ---
-    **Note:** This tool is intended for educational and research purposes only. It is a simplified version and does not offer the comprehensive features or performance of professional-grade software.
-    """)
-    
+    <span style="font-size:0.9em; color:gray;">
+    **Note:** This tool is intended for educational and research purposes only. It is a simplified version and does not offer the comprehensive 
+    features or performance of professional-grade software.
+    </span>
+    """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
     main()
