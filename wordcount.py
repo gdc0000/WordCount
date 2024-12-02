@@ -187,9 +187,13 @@ def main():
     # Disclaimer
     st.markdown("""
     ---
-    **Disclaimer:** This application is an amateur replication inspired by proprietary software for educational and research purposes only. It is not affiliated with or endorsed by the creators of the original software. Performance and features may vary and are not comparable to the official tool.
+    <span style="font-size:0.9em; color:gray;">
+    **Disclaimer:** This application is an amateur replication inspired by proprietary software for educational and research purposes only. 
+    It is not affiliated with or endorsed by the creators of the original software. Performance and features may vary and are not comparable 
+    to the official tool.
+    </span>
     ---
-    """)
+    """, unsafe_allow_html=True)
     
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
