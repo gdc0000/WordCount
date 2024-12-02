@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 
 # Define functions
 def load_dataset(uploaded_file):
@@ -41,10 +42,14 @@ def count_lexicon_regex_asterisk(document, word_list):
 
     return clean_document, len_document, n_tokens, n_types, count, word_perc, detected_words
 
-def analyze_text(documents, wordlist):
+def analyze_text(documents, wordlist, progress_bar):
     """Perform textual analysis on documents using a wordlist."""
-    results = documents.apply(lambda doc: count_lexicon_regex_asterisk(doc, wordlist))
-    analysis_df = pd.DataFrame(results.tolist(), columns=[
+    results = []
+    total_docs = len(documents)
+    for i, doc in enumerate(documents):
+        results.append(count_lexicon_regex_asterisk(doc, wordlist))
+        progress_bar.progress((i + 1) / total_docs)  # Update progress bar
+    analysis_df = pd.DataFrame(results, columns=[
         'clean_document', 'len_document', 'n_tokens', 'n_types', 'count', 'word_perc', 'detected_words'
     ])
     return analysis_df
@@ -92,23 +97,24 @@ if uploaded_dataset and uploaded_wordlist:
                 text_column = st.selectbox("Select the column containing text data:", dataset.columns)
                 documents = dataset[text_column].astype(str)
 
-                # Analyze text
-                st.write("### Performing Textual Analysis...")
-                analysis_df = analyze_text(documents, wordlist)
+                if st.button("Start Analysis"):
+                    st.write("### Performing Textual Analysis...")
+                    progress_bar = st.progress(0)  # Initialize progress bar
+                    analysis_df = analyze_text(documents, wordlist, progress_bar)
 
-                # Enhance dataset
-                enhanced_dataset = enhance_dataset(dataset, text_column, analysis_df, label)
-                st.write("### Enhanced Dataset")
-                st.dataframe(enhanced_dataset.head())
+                    # Enhance dataset
+                    enhanced_dataset = enhance_dataset(dataset, text_column, analysis_df, label)
+                    st.write("### Enhanced Dataset")
+                    st.dataframe(enhanced_dataset.head())
 
-                # Download enhanced dataset
-                output_csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download Enhanced Dataset (CSV)",
-                    data=output_csv,
-                    file_name="enhanced_dataset.csv",
-                    mime="text/csv",
-                )
+                    # Download enhanced dataset
+                    output_csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download Enhanced Dataset (CSV)",
+                        data=output_csv,
+                        file_name="enhanced_dataset.csv",
+                        mime="text/csv",
+                    )
             else:
                 st.info("Please enter a label for the wordlist.")
     except Exception as e:
