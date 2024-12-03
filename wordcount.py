@@ -3,8 +3,6 @@ import pandas as pd
 import re
 from typing import List, Dict, Tuple
 from collections import Counter
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
 import plotly.express as px
 from scipy.stats import pearsonr
 import statsmodels.api as sm
@@ -569,14 +567,21 @@ def main():
                         mime="text/csv",
                     )
                     
-                    # Generate and display bar plots for each category in three per line
+                    # Generate and display bar plots for selected categories based on user selection
                     st.subheader("📊 Word Frequency Analysis")
-                    # Create chunks of three categories each
-                    for i in range(0, len(selected_categories), 3):
-                        cols = st.columns(3)
-                        for j, category in enumerate(selected_categories[i:i+3]):
-                            column_name = f"{category}_detected_words"
-                            if column_name in enhanced_dataset.columns:
+                    
+                    # User selects which categories to display bar plots for
+                    plot_categories = st.multiselect(
+                        "🔎 Select Categories to Display Bar Plots:",
+                        options=selected_categories,
+                        default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
+                    )
+                    
+                    if plot_categories:
+                        # Create chunks of three categories each for layout
+                        for i in range(0, len(plot_categories), 3):
+                            cols = st.columns(3)
+                            for j, category in enumerate(plot_categories[i:i+3]):
                                 with cols[j]:
                                     st.markdown(f"**{category}**")
                                     # Allow user to select number of top words, default to 3
@@ -588,7 +593,14 @@ def main():
                                         step=1, 
                                         key=f"top_n_{category}"
                                     )
-                                    generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
+                                    column_name = f"{category}_detected_words"
+                                    if column_name in enhanced_dataset.columns:
+                                        generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
+                                    else:
+                                        st.warning(f"No detected words data available for category '{category}'.")
+                    
+                    else:
+                        st.info("🔎 Please select at least one category to display bar plots.")
                     
                     # Divider before statistical analyses
                     st.markdown("---")
