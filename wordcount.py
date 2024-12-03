@@ -3,8 +3,6 @@ import pandas as pd
 import re
 from typing import List, Dict, Tuple
 from collections import Counter
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
 import plotly.express as px
 from scipy.stats import pearsonr
 import statsmodels.api as sm
@@ -229,35 +227,49 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
-def generate_wordcloud(detected_words_series: pd.Series, label: str) -> None:
+def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 10) -> None:
     """
-    Generate and display a word cloud from detected words.
+    Generate and display a horizontal Plotly bar plot from detected words.
     
     Parameters:
         detected_words_series: pandas Series containing lists of detected words.
         label: Label/category name for the wordlist.
+        top_n: Number of top words to display.
     """
     # Flatten the list of detected words
     all_detected_words = [word for sublist in detected_words_series for word in sublist]
     if not all_detected_words:
-        st.warning(f"No words detected for category '{label}' to generate a word cloud.")
+        st.warning(f"No words detected for category '{label}' to generate a bar plot.")
         return
     
     # Count word frequencies
     word_counts = Counter(all_detected_words)
     
-    # Generate word cloud
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(word_counts)
+    # Get the top N words
+    top_words = word_counts.most_common(top_n)
+    words, counts = zip(*top_words)
     
-    # Plotting the word cloud using matplotlib
-    plt.figure(figsize=(15, 7.5))
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis('off')
-    plt.title(f"🖼️ Word Cloud for '{label}'", fontsize=20)
-    plt.tight_layout(pad=0)
+    # Create a DataFrame for plotting
+    df_plot = pd.DataFrame({
+        'Word': words,
+        'Frequency': counts
+    })
     
-    # Display the word cloud in Streamlit
-    st.pyplot(plt)
+    # Generate horizontal bar plot using Plotly
+    fig = px.bar(
+        df_plot,
+        x='Frequency',
+        y='Word',
+        orientation='h',
+        title=f"📊 Top {top_n} Words in '{label}' Category",
+        labels={'Frequency': 'Frequency', 'Word': 'Word'},
+        height=600
+    )
+    
+    fig.update_layout(yaxis={'categoryorder':'total ascending'})
+    
+    # Display the Plotly bar plot in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
 
 def perform_pearson_correlation(enhanced_df: pd.DataFrame):
     """
@@ -274,7 +286,8 @@ def perform_pearson_correlation(enhanced_df: pd.DataFrame):
         st.warning("Not enough numeric columns available for correlation analysis.")
         return
     
-    col1, col2 = st.selectbox("Select the first numeric column:", options=numeric_cols), st.selectbox("Select the second numeric column:", options=numeric_cols, index=1)
+    col1 = st.selectbox("Select the first numeric column:", options=numeric_cols)
+    col2 = st.selectbox("Select the second numeric column:", options=numeric_cols, index=1)
     
     if st.button("Compute Pearson Correlation"):
         if col1 == col2:
@@ -291,7 +304,14 @@ def perform_pearson_correlation(enhanced_df: pd.DataFrame):
         st.write(f"**P-value:** {p_value:.4f}")
         
         # Generate Plotly scatter plot with trendline
-        fig = px.scatter(df_clean, x=col1, y=col2, trendline="ols", title=f"Scatter Plot of {col1} vs {col2} with Trendline")
+        fig = px.scatter(
+            df_clean, 
+            x=col1, 
+            y=col2, 
+            trendline="ols", 
+            title=f"Scatter Plot of {col1} vs {col2} with Trendline",
+            labels={col1: col1, col2: col2}
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 def perform_anova(enhanced_df: pd.DataFrame):
@@ -343,9 +363,16 @@ def perform_anova(enhanced_df: pd.DataFrame):
         
         # Generate Plotly bar plot with error bars (standard deviation)
         group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'std']).reset_index()
-        fig = px.bar(group_stats, x=cat_var, y='mean', error_y='std',
-                     labels={cat_var: cat_var, 'mean': f'Mean of {num_var}'},
-                     title=f'Bar Plot of {num_var} by {cat_var} with Standard Deviation')
+        fig = px.bar(
+            group_stats, 
+            x='mean', 
+            y=cat_var, 
+            orientation='h',
+            error_x='std',
+            title=f'Bar Plot of {num_var} by {cat_var} with Standard Deviation',
+            labels={'mean': f'Mean of {num_var}', cat_var: cat_var}
+        )
+        fig.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
@@ -435,12 +462,14 @@ def main():
                                 mime="text/csv",
                             )
                             
-                            # Generate and display word clouds for each category
+                            # Generate and display bar plots for each category
                             for category in selected_categories:
                                 column_name = f"{category}_detected_words"
                                 if column_name in enhanced_dataset.columns:
-                                    st.subheader(f"🌐 Word Cloud of Detected Words for '{category}'")
-                                    generate_wordcloud(enhanced_dataset[column_name], category)
+                                    st.subheader(f"📊 Top Words in '{category}' Category")
+                                    # Allow user to select number of top words
+                                    top_n = st.number_input(f"Select number of top words to display for '{category}':", min_value=1, max_value=50, value=10, step=1, key=f"top_n_{category}")
+                                    generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
                             
                             # Divider before statistical analyses
                             st.markdown("---")
