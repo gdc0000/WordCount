@@ -9,6 +9,7 @@ import plotly.express as px
 from scipy.stats import pearsonr
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import io
 
 # =========================
@@ -393,21 +394,41 @@ def perform_anova(enhanced_df: pd.DataFrame):
         else:
             st.info("The ANOVA test is not significant (p ≥ 0.05). There are no significant differences between group means.")
         
-        # Generate Plotly bar plot with error bars (standard deviation)
-        group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'std']).reset_index()
+        # Perform Tukey's HSD Post Hoc Test
+        tukey = pairwise_tukeyhsd(endog=df_clean[num_var], groups=df_clean[cat_var], alpha=0.05)
+        tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
+        
+        st.write("**Tukey's HSD Post Hoc Comparisons:**")
+        st.table(tukey_df)
+        
+        # Generate Plotly bar plot with 95% Confidence Intervals
+        group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'sem']).reset_index()
+        group_stats.rename(columns={'sem': 'standard_error'}, inplace=True)
+        group_stats['ci_lower'] = group_stats['mean'] - 1.96 * group_stats['standard_error']
+        group_stats['ci_upper'] = group_stats['mean'] + 1.96 * group_stats['standard_error']
+        
         fig = px.bar(
             group_stats, 
             x='mean', 
             y=cat_var, 
             orientation='h',
-            error_x='std',
-            title=f'Bar Plot of {num_var} by {cat_var} with Standard Deviation',
+            title=f'Bar Plot of {num_var} by {cat_var} with 95% Confidence Intervals',
             labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
+            error_x='standard_error',
             height=600
         )
         fig.update_layout(yaxis={'categoryorder':'total ascending'})
+        
+        # Add confidence interval lines manually
+        for i, row in group_stats.iterrows():
+            fig.add_shape(
+                type="line",
+                x0=row['ci_lower'], y0=i, x1=row['ci_upper'], y1=i,
+                line=dict(color="black", width=2)
+            )
+        
         st.plotly_chart(fig, use_container_width=True)
-
+    
 # =========================
 #        STREAMLIT APP
 # =========================
