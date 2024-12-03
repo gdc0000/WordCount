@@ -260,7 +260,7 @@ def generate_summary_list(exact_words: Dict[str, set]) -> str:
     summary_text = '\n\n'.join(summary_lines)  # Double newline for better spacing
     return summary_text
 
-def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 10) -> None:
+def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 3) -> None:
     """
     Generate and display a horizontal Plotly bar plot from detected words.
     
@@ -296,7 +296,7 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
         orientation='h',
         title=f"📊 Top {top_n} Words in '{label}' Category",
         labels={'Frequency': 'Frequency', 'Word': 'Word'},
-        height=600
+        height=400  # Reduced height for smaller plots
     )
     
     fig.update_layout(yaxis={'categoryorder':'total ascending'})
@@ -415,7 +415,7 @@ def perform_anova(enhanced_df: pd.DataFrame):
             title=f'Bar Plot of {num_var} by {cat_var} with 95% Confidence Intervals',
             labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
             error_x='standard_error',
-            height=600
+            height=600  # Adjusted height for better visibility
         )
         fig.update_layout(yaxis={'categoryorder':'total ascending'})
         
@@ -428,7 +428,7 @@ def perform_anova(enhanced_df: pd.DataFrame):
             )
         
         st.plotly_chart(fig, use_container_width=True)
-    
+
 # =========================
 #        STREAMLIT APP
 # =========================
@@ -444,17 +444,67 @@ def main():
     st.set_page_config(page_title="TextInsight Analyzer", layout="wide")
     st.title("📊 TextInsight Analyzer")
     
-    # Disclaimer
+    # Visual Introduction
     st.markdown("""
-    ---
-    <span style="font-size:0.9em; color:gray;">
-    **Disclaimer:** This application is an amateur replication inspired by proprietary software for educational and research purposes only. 
-    It is not affiliated with or endorsed by the creators of the original software. Performance and features may vary and are not comparable 
-    to the official tool.
-    </span>
-    ---
-    """, unsafe_allow_html=True)
+    ## 👋 Welcome to TextInsight Analyzer!
+
+    **TextInsight Analyzer** is a tool designed to help you analyze textual data by leveraging customizable wordlists. Here's how to get started:
+
+    ### 📁 Expected Files
+
+    #### 1. **Dataset File**
+    - **Format:** CSV or Excel (`.csv`, `.xls`, `.xlsx`)
+    - **Requirements:**
+        - Must contain at least one column with textual data.
+        - Example columns:
+            - `id`: Unique identifier for each entry.
+            - `text`: The column containing the text you want to analyze.
+    - **Sample Format:**
     
+        | id | text                                      |
+        |----|-------------------------------------------|
+        | 1  | I am happy and joyful today.             |
+        | 2  | This is a sad and gloomy day.             |
+        | ...| ...                                       |
+
+    #### 2. **Wordlist (Dictionary) File**
+    - **Format:** CSV, TXT, DIC, DICX, or Excel (`.csv`, `.txt`, `.dic`, `.dicx`, `.xls`, `.xlsx`)
+    - **Requirements:**
+        - Must contain a column named `DicTerm` with the words to analyze.
+        - Additional columns represent categories. Mark a word for a category with an `X`.
+        - **Wildcard Prefixes:** To indicate prefix matching, end a word with an asterisk (`*`). For example, `run*` will match `running`, `runner`, etc.
+    - **Sample Format:**
+    
+        | DicTerm       | Conservation | SelfTranscendence | OpennessToChange |
+        |---------------|--------------|--------------------|-------------------|
+        | abide         | X            |                    |                   |
+        | ability       |              |                    | X                 |
+        | accept        | X            |                    |                   |
+        | act*          |              |                    | X                 |
+        | ...           | ...          | ...                | ...               |
+
+    ### 🛠️ Getting Started
+
+    1. **Upload Files:**
+        - Use the sidebar to upload your **Dataset** and **Wordlist** files.
+    
+    2. **Preview Data:**
+        - After uploading, preview your dataset and review the wordlist summary.
+    
+    3. **Select Categories:**
+        - Choose which categories from your wordlist you want to analyze.
+    
+    4. **Perform Analysis:**
+        - Select the text column and start the analysis.
+    
+    5. **View Results:**
+        - Explore the enhanced dataset, word frequency bar plots, and perform statistical analyses like Pearson Correlation and ANOVA.
+    
+    ### 📌 Notes
+    - Ensure that your wordlist is properly formatted to achieve accurate analysis results.
+    - The tool is intended for educational and research purposes. It may not cover all edge cases or complex textual nuances.
+    """)
+
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
@@ -519,20 +569,26 @@ def main():
                         mime="text/csv",
                     )
                     
-                    # Generate and display bar plots for each category
+                    # Generate and display bar plots for each category in three per line
                     st.subheader("📊 Word Frequency Analysis")
-                    for category in selected_categories:
-                        column_name = f"{category}_detected_words"
-                        if column_name in enhanced_dataset.columns:
-                            st.markdown(f"**{category}**")
-                            # Allow user to select number of top words
-                            top_n = st.number_input(f"Select number of top words to display for '{category}':", 
-                                                    min_value=1, 
-                                                    max_value=50, 
-                                                    value=10, 
-                                                    step=1, 
-                                                    key=f"top_n_{category}")
-                            generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
+                    # Create chunks of three categories each
+                    for i in range(0, len(selected_categories), 3):
+                        cols = st.columns(3)
+                        for j, category in enumerate(selected_categories[i:i+3]):
+                            column_name = f"{category}_detected_words"
+                            if column_name in enhanced_dataset.columns:
+                                with cols[j]:
+                                    st.markdown(f"**{category}**")
+                                    # Allow user to select number of top words, default to 3
+                                    top_n = st.number_input(
+                                        f"Select number of top words to display for '{category}':", 
+                                        min_value=1, 
+                                        max_value=50, 
+                                        value=3,  # Default value set to 3
+                                        step=1, 
+                                        key=f"top_n_{category}"
+                                    )
+                                    generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
                     
                     # Divider before statistical analyses
                     st.markdown("---")
