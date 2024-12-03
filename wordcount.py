@@ -5,6 +5,10 @@ from typing import List, Dict, Tuple
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+import plotly.express as px
+from scipy.stats import pearsonr
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
 
 # =========================
 #        FUNCTIONS
@@ -255,6 +259,95 @@ def generate_wordcloud(detected_words_series: pd.Series, label: str) -> None:
     # Display the word cloud in Streamlit
     st.pyplot(plt)
 
+def perform_pearson_correlation(enhanced_df: pd.DataFrame):
+    """
+    Allow the user to compute Pearson correlation between two numeric columns.
+    
+    Parameters:
+        enhanced_df: Enhanced pandas DataFrame with analysis results.
+    """
+    st.header("🔍 Pearson Correlation Analysis")
+    
+    # Select numeric columns for correlation
+    numeric_cols = enhanced_df.select_dtypes(include=['number']).columns.tolist()
+    if len(numeric_cols) < 2:
+        st.warning("Not enough numeric columns available for correlation analysis.")
+        return
+    
+    col1, col2 = st.selectbox("Select the first numeric column:", options=numeric_cols), st.selectbox("Select the second numeric column:", options=numeric_cols, index=1)
+    
+    if st.button("Compute Pearson Correlation"):
+        if col1 == col2:
+            st.error("Please select two different columns.")
+            return
+        # Drop NaN values
+        df_clean = enhanced_df[[col1, col2]].dropna()
+        if df_clean.empty:
+            st.error("No data available to compute correlation.")
+            return
+        # Compute Pearson correlation
+        corr_coef, p_value = pearsonr(df_clean[col1], df_clean[col2])
+        st.write(f"**Pearson Correlation Coefficient:** {corr_coef:.4f}")
+        st.write(f"**P-value:** {p_value:.4f}")
+        
+        # Generate Plotly scatter plot with trendline
+        fig = px.scatter(df_clean, x=col1, y=col2, trendline="ols", title=f"Scatter Plot of {col1} vs {col2} with Trendline")
+        st.plotly_chart(fig, use_container_width=True)
+
+def perform_anova(enhanced_df: pd.DataFrame):
+    """
+    Allow the user to perform ANOVA to test mean differences across groups.
+    
+    Parameters:
+        enhanced_df: Enhanced pandas DataFrame with analysis results.
+    """
+    st.header("📊 ANOVA (Analysis of Variance)")
+    
+    # Identify categorical and numeric columns
+    categorical_cols = enhanced_df.select_dtypes(include=['object', 'category']).columns.tolist()
+    numeric_cols = enhanced_df.select_dtypes(include=['number']).columns.tolist()
+    
+    if not categorical_cols:
+        st.warning("No categorical columns available for ANOVA.")
+        return
+    if not numeric_cols:
+        st.warning("No numeric columns available for ANOVA.")
+        return
+    
+    # User selects categorical and numeric variables
+    cat_var = st.selectbox("Select the categorical (between factor) variable:", options=categorical_cols)
+    num_var = st.selectbox("Select the numeric dependent variable:", options=numeric_cols)
+    
+    if st.button("Perform ANOVA"):
+        # Drop NaN values
+        df_clean = enhanced_df[[cat_var, num_var]].dropna()
+        if df_clean.empty:
+            st.error("No data available to perform ANOVA.")
+            return
+        
+        # Ensure categorical variable is treated as category
+        df_clean[cat_var] = df_clean[cat_var].astype('category')
+        
+        # Perform one-way ANOVA using statsmodels
+        model = ols(f'{num_var} ~ C({cat_var})', data=df_clean).fit()
+        anova_table = sm.stats.anova_lm(model, typ=2)
+        
+        st.write("**ANOVA Table:**")
+        st.table(anova_table)
+        
+        # Check if the ANOVA is significant
+        if anova_table['PR(>F)'][0] < 0.05:
+            st.success("The ANOVA test is significant (p < 0.05). There are significant differences between group means.")
+        else:
+            st.info("The ANOVA test is not significant (p ≥ 0.05). There are no significant differences between group means.")
+        
+        # Generate Plotly bar plot with error bars (standard deviation)
+        group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'std']).reset_index()
+        fig = px.bar(group_stats, x=cat_var, y='mean', error_y='std',
+                     labels={cat_var: cat_var, 'mean': f'Mean of {num_var}'},
+                     title=f'Bar Plot of {num_var} by {cat_var} with Standard Deviation')
+        st.plotly_chart(fig, use_container_width=True)
+
 # =========================
 #        STREAMLIT APP
 # =========================
@@ -348,6 +441,21 @@ def main():
                                 if column_name in enhanced_dataset.columns:
                                     st.subheader(f"🌐 Word Cloud of Detected Words for '{category}'")
                                     generate_wordcloud(enhanced_dataset[column_name], category)
+                            
+                            # Divider before statistical analyses
+                            st.markdown("---")
+                            
+                            # Statistical Analyses Section
+                            st.subheader("📊 Statistical Analyses")
+                            
+                            # Create tabs for correlation and ANOVA
+                            analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
+                            
+                            with analysis_tab:
+                                perform_pearson_correlation(enhanced_dataset)
+                            
+                            with anova_tab:
+                                perform_anova(enhanced_dataset)
             else:
                 st.info("📌 Please select at least one category to analyze.")
     else:
