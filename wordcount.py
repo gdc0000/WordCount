@@ -36,7 +36,7 @@ def load_dataset(uploaded_file):
 @st.cache_data
 def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
     """
-    Load and preprocess a multi-category wordlist from a CSV, TXT, DIC, or XLSX file.
+    Load and preprocess a multi-category wordlist from a CSV, TXT, DIC, DICX, or XLSX file.
     
     Parameters:
         uploaded_file: Uploaded file object from Streamlit.
@@ -53,10 +53,13 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
         elif file_extension in ['txt', 'dic']:
             # Assume tab-separated for TXT and DIC files
             wordlist_df = pd.read_csv(uploaded_file, sep='\t')
+        elif file_extension == 'dicx':
+            # Treat .dicx as comma-separated
+            wordlist_df = pd.read_csv(uploaded_file, sep=',')
         elif file_extension in ['xls', 'xlsx']:
             wordlist_df = pd.read_excel(uploaded_file)
         else:
-            st.error("Unsupported file format for wordlist. Please upload a CSV, TXT, DIC, or Excel file.")
+            st.error("Unsupported file format for wordlist. Please upload a CSV, TXT, DIC, DICX, or Excel file.")
             return None, None
         
         if 'DicTerm' not in wordlist_df.columns:
@@ -275,7 +278,7 @@ def main():
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
-    uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV, TXT, DIC, or Excel)", type=["csv", "txt", "dic", "xls", "xlsx"])
+    uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV, TXT, DIC, DICX, or Excel)", type=["csv", "txt", "dic", "dicx", "xls", "xlsx"])
     
     if uploaded_dataset and uploaded_wordlist:
         # Load dataset
