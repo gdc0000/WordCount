@@ -232,7 +232,7 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
 
 def generate_summary_list(exact_words: Dict[str, set]) -> str:
     """
-    Generate a simple list summary of the wordlist categories.
+    Generate a simple list summary of the wordlist categories, showing top three and bottom three words.
     
     Parameters:
         exact_words: Dictionary mapping categories to exact words.
@@ -246,12 +246,17 @@ def generate_summary_list(exact_words: Dict[str, set]) -> str:
         if word_count == 0:
             words_str = "None"
         else:
-            # Sort words alphabetically and join with commas
+            # Sort words alphabetically
             sorted_words = sorted(words)
-            words_str = ', '.join(sorted_words)
+            if word_count <= 6:
+                words_str = ', '.join(sorted_words)
+            else:
+                top_three = sorted_words[:3]
+                bottom_three = sorted_words[-3:]
+                words_str = ', '.join(top_three) + ', ... , ' + ', '.join(bottom_three)
         summary_line = f"**{category} ({word_count} words):** {words_str};"
         summary_lines.append(summary_line)
-    summary_text = '\n'.join(summary_lines)
+    summary_text = '\n\n'.join(summary_lines)  # Double newline for better spacing
     return summary_text
 
 def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 10) -> None:
@@ -446,7 +451,7 @@ def main():
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary as a simple list
+            # Display wordlist summary as a simple list with top 3 and bottom 3 words
             st.subheader("📃 Wordlist Summary")
             summary_text = generate_summary_list(exact_words)
             st.markdown(summary_text)
