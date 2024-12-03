@@ -230,34 +230,22 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
-def generate_wordcloud(detected_words_series: pd.Series, label: str, max_words: int = 100, width: int = 400, height: int = 300) -> io.BytesIO:
+def generate_summary_wordcloud(exact_words: Dict[str, set]) -> io.BytesIO:
     """
-    Generate a word cloud image from detected words.
+    Generate a word cloud where each category is a word, sized by the number of words in the category.
     
     Parameters:
-        detected_words_series: pandas Series containing lists of detected words.
-        label: Label/category name for the wordlist.
-        max_words: Maximum number of words in the word cloud.
-        width: Width of the word cloud image.
-        height: Height of the word cloud image.
+        exact_words: Dictionary mapping categories to exact words.
         
     Returns:
         BytesIO object containing the word cloud image.
     """
-    # Flatten the list of detected words
-    all_detected_words = [word for sublist in detected_words_series for word in sublist]
-    if not all_detected_words:
-        return None
-    
-    # Count word frequencies
-    word_counts = Counter(all_detected_words)
-    
-    # Generate word cloud
-    wordcloud = WordCloud(width=width, height=height, background_color='white', max_words=max_words).generate_from_frequencies(word_counts)
+    category_sizes = {category: len(words) for category, words in exact_words.items()}
+    wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(category_sizes)
     
     # Save the word cloud image to a BytesIO object
     img_buffer = io.BytesIO()
-    plt.figure(figsize=(width / 100, height / 100))
+    plt.figure(figsize=(8, 4))
     plt.imshow(wordcloud, interpolation='bilinear')
     plt.axis('off')
     plt.tight_layout(pad=0)
@@ -458,55 +446,16 @@ def main():
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary as Grid of Word Clouds
+            # Display wordlist summary as a single word cloud
             st.subheader("📃 Wordlist Summary")
-            
-            # Prepare data for the summary word clouds
-            summary_data = []
-            for category in exact_words.keys():
-                word_count = len(exact_words[category])
-                if word_count == 0:
-                    examples = "None"
-                else:
-                    sorted_words = sorted(exact_words[category])
-                    top_three = sorted_words[:3]
-                    bottom_three = sorted_words[-3:] if word_count >=6 else sorted_words[3:]
-                    examples = ', '.join(top_three + bottom_three)
-                summary_data.append({
-                    'Category': category,
-                    'Word Count': word_count,
-                    'Examples': examples
-                })
-            
-            summary_df = pd.DataFrame(summary_data)
-            
-            # Create a grid of word clouds (four per row)
-            num_cols = 4
-            rows = [summary_df[i:i+num_cols] for i in range(0, summary_df.shape[0], num_cols)]
-            
-            for row in rows:
-                cols = st.columns(num_cols)
-                for idx, col in enumerate(cols):
-                    if idx < len(row):
-                        category = row.iloc[idx]['Category']
-                        word_count = row.iloc[idx]['Word Count']
-                        examples = row.iloc[idx]['Examples']
-                        col.markdown(f"**{category}**\n*Words: {word_count}*\n*Examples: {examples}*")
-                        # Generate word cloud
-                        column_name = f"{category}_detected_words"
-                        # Since we haven't run analysis yet, we can display the exact words
-                        exact_word_list = sorted(list(exact_words[category]))
-                        if exact_word_list:
-                            wordcloud = WordCloud(width=200, height=150, background_color='white', max_words=100).generate(' '.join(exact_word_list))
-                            fig, ax = plt.subplots(figsize=(2,1.5))
-                            ax.imshow(wordcloud, interpolation='bilinear')
-                            ax.axis('off')
-                            col.pyplot(fig)
-                        else:
-                            col.write("No words available.")
+            wordcloud_img = generate_summary_wordcloud(exact_words)
+            if wordcloud_img:
+                st.image(wordcloud_img, use_column_width=True)
+            else:
+                st.warning("No categories available to display in the summary word cloud.")
             
             # Select categories to analyze
-            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=summary_df['Category'], default=summary_df['Category'])
+            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=list(exact_words.keys()), default=list(exact_words.keys()))
             
             if selected_categories:
                 # Select text column
@@ -530,7 +479,7 @@ def main():
                             st.session_state.enhanced_dataset = enhanced_dataset
                             st.session_state.analysis_done = True
                             st.success("✅ Textual Analysis Completed!")
-                    
+                
                 # If analysis is done, display results and allow statistical analyses
                 if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
                     enhanced_dataset = st.session_state.enhanced_dataset
@@ -547,7 +496,7 @@ def main():
                         mime="text/csv",
                     )
                     
-                    # Generate and display word plots for each category
+                    # Generate and display bar plots for each category
                     st.subheader("📊 Word Frequency Analysis")
                     for category in selected_categories:
                         column_name = f"{category}_detected_words"
@@ -576,6 +525,8 @@ def main():
                     
                     with anova_tab:
                         perform_anova(enhanced_dataset)
+            else:
+                st.info("📌 Please select at least one category to analyze.")
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
     
