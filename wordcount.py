@@ -230,29 +230,29 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
-def generate_summary_wordcloud(exact_words: Dict[str, set]) -> io.BytesIO:
+def generate_summary_list(exact_words: Dict[str, set]) -> str:
     """
-    Generate a word cloud where each category is a word, sized by the number of words in the category.
+    Generate a simple list summary of the wordlist categories.
     
     Parameters:
         exact_words: Dictionary mapping categories to exact words.
         
     Returns:
-        BytesIO object containing the word cloud image.
+        A formatted string representing the wordlist summary.
     """
-    category_sizes = {category: len(words) for category, words in exact_words.items()}
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(category_sizes)
-    
-    # Save the word cloud image to a BytesIO object
-    img_buffer = io.BytesIO()
-    plt.figure(figsize=(8, 4))
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis('off')
-    plt.tight_layout(pad=0)
-    plt.savefig(img_buffer, format='png')
-    plt.close()
-    img_buffer.seek(0)
-    return img_buffer
+    summary_lines = []
+    for category, words in exact_words.items():
+        word_count = len(words)
+        if word_count == 0:
+            words_str = "None"
+        else:
+            # Sort words alphabetically and join with commas
+            sorted_words = sorted(words)
+            words_str = ', '.join(sorted_words)
+        summary_line = f"**{category} ({word_count} words):** {words_str};"
+        summary_lines.append(summary_line)
+    summary_text = '\n'.join(summary_lines)
+    return summary_text
 
 def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 10) -> None:
     """
@@ -446,13 +446,10 @@ def main():
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary as a single word cloud
+            # Display wordlist summary as a simple list
             st.subheader("📃 Wordlist Summary")
-            wordcloud_img = generate_summary_wordcloud(exact_words)
-            if wordcloud_img:
-                st.image(wordcloud_img, use_column_width=True)
-            else:
-                st.warning("No categories available to display in the summary word cloud.")
+            summary_text = generate_summary_list(exact_words)
+            st.markdown(summary_text)
             
             # Select categories to analyze
             selected_categories = st.multiselect("📌 Select Categories to Analyze", options=list(exact_words.keys()), default=list(exact_words.keys()))
