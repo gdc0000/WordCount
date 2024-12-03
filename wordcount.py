@@ -3,10 +3,13 @@ import pandas as pd
 import re
 from typing import List, Dict, Tuple
 from collections import Counter
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
 import plotly.express as px
 from scipy.stats import pearsonr
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
+import io
 
 # =========================
 #        FUNCTIONS
@@ -227,6 +230,42 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
+def generate_wordcloud(detected_words_series: pd.Series, label: str, max_words: int = 100, width: int = 400, height: int = 300) -> io.BytesIO:
+    """
+    Generate a word cloud image from detected words.
+    
+    Parameters:
+        detected_words_series: pandas Series containing lists of detected words.
+        label: Label/category name for the wordlist.
+        max_words: Maximum number of words in the word cloud.
+        width: Width of the word cloud image.
+        height: Height of the word cloud image.
+        
+    Returns:
+        BytesIO object containing the word cloud image.
+    """
+    # Flatten the list of detected words
+    all_detected_words = [word for sublist in detected_words_series for word in sublist]
+    if not all_detected_words:
+        return None
+    
+    # Count word frequencies
+    word_counts = Counter(all_detected_words)
+    
+    # Generate word cloud
+    wordcloud = WordCloud(width=width, height=height, background_color='white', max_words=max_words).generate_from_frequencies(word_counts)
+    
+    # Save the word cloud image to a BytesIO object
+    img_buffer = io.BytesIO()
+    plt.figure(figsize=(width / 100, height / 100))
+    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.axis('off')
+    plt.tight_layout(pad=0)
+    plt.savefig(img_buffer, format='png')
+    plt.close()
+    img_buffer.seek(0)
+    return img_buffer
+
 def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 10) -> None:
     """
     Generate and display a horizontal Plotly bar plot from detected words.
@@ -286,8 +325,8 @@ def perform_pearson_correlation(enhanced_df: pd.DataFrame):
         st.warning("Not enough numeric columns available for correlation analysis.")
         return
     
-    col1 = st.selectbox("Select the first numeric column:", options=numeric_cols)
-    col2 = st.selectbox("Select the second numeric column:", options=numeric_cols, index=1)
+    col1 = st.selectbox("Select the first numeric column:", options=numeric_cols, key="corr_col1")
+    col2 = st.selectbox("Select the second numeric column:", options=numeric_cols, index=1, key="corr_col2")
     
     if st.button("Compute Pearson Correlation"):
         if col1 == col2:
@@ -335,8 +374,8 @@ def perform_anova(enhanced_df: pd.DataFrame):
         return
     
     # User selects categorical and numeric variables
-    cat_var = st.selectbox("Select the categorical (between factor) variable:", options=categorical_cols)
-    num_var = st.selectbox("Select the numeric dependent variable:", options=numeric_cols)
+    cat_var = st.selectbox("Select the categorical (between factor) variable:", options=categorical_cols, key="anova_cat_var")
+    num_var = st.selectbox("Select the numeric dependent variable:", options=numeric_cols, key="anova_num_var")
     
     if st.button("Perform ANOVA"):
         # Drop NaN values
@@ -381,6 +420,12 @@ def perform_anova(enhanced_df: pd.DataFrame):
 # =========================
 
 def main():
+    # Initialize session_state variables if they don't exist
+    if 'analysis_done' not in st.session_state:
+        st.session_state.analysis_done = False
+    if 'enhanced_dataset' not in st.session_state:
+        st.session_state.enhanced_dataset = None
+
     # Configure Streamlit page
     st.set_page_config(page_title="TextInsight Analyzer", layout="wide")
     st.title("📊 TextInsight Analyzer")
@@ -413,10 +458,10 @@ def main():
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary as Plotly horizontal bar plot
+            # Display wordlist summary as Grid of Word Clouds
             st.subheader("📃 Wordlist Summary")
             
-            # Prepare data for the summary plot
+            # Prepare data for the summary word clouds
             summary_data = []
             for category in exact_words.keys():
                 word_count = len(exact_words[category])
@@ -435,22 +480,30 @@ def main():
             
             summary_df = pd.DataFrame(summary_data)
             
-            # Create a Plotly horizontal bar plot
-            fig_summary = px.bar(
-                summary_df,
-                x='Word Count',
-                y='Category',
-                orientation='h',
-                text=summary_df.apply(lambda row: f"{row['Word Count']} ({row['Examples']})", axis=1),
-                title="📊 Wordlist Categories Summary",
-                labels={'Word Count': 'Number of Words', 'Category': 'Category'},
-                height=600
-            )
+            # Create a grid of word clouds (four per row)
+            num_cols = 4
+            rows = [summary_df[i:i+num_cols] for i in range(0, summary_df.shape[0], num_cols)]
             
-            fig_summary.update_traces(textposition='inside', textfont_size=12, marker_color='indigo')
-            fig_summary.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
-            
-            st.plotly_chart(fig_summary, use_container_width=True)
+            for row in rows:
+                cols = st.columns(num_cols)
+                for idx, col in enumerate(cols):
+                    if idx < len(row):
+                        category = row.iloc[idx]['Category']
+                        word_count = row.iloc[idx]['Word Count']
+                        examples = row.iloc[idx]['Examples']
+                        col.markdown(f"**{category}**\n*Words: {word_count}*\n*Examples: {examples}*")
+                        # Generate word cloud
+                        column_name = f"{category}_detected_words"
+                        # Since we haven't run analysis yet, we can display the exact words
+                        exact_word_list = sorted(list(exact_words[category]))
+                        if exact_word_list:
+                            wordcloud = WordCloud(width=200, height=150, background_color='white', max_words=100).generate(' '.join(exact_word_list))
+                            fig, ax = plt.subplots(figsize=(2,1.5))
+                            ax.imshow(wordcloud, interpolation='bilinear')
+                            ax.axis('off')
+                            col.pyplot(fig)
+                        else:
+                            col.write("No words available.")
             
             # Select categories to analyze
             selected_categories = st.multiselect("📌 Select Categories to Analyze", options=summary_df['Category'], default=summary_df['Category'])
@@ -473,46 +526,56 @@ def main():
                             selected_wildcard_prefixes = {cat: wildcard_prefixes[cat] for cat in selected_categories}
                             analysis_df = analyze_text(documents, selected_exact_words, selected_wildcard_prefixes, progress_bar)
                             enhanced_dataset = enhance_dataset(dataset, analysis_df)
+                            # Store enhanced_dataset in session_state
+                            st.session_state.enhanced_dataset = enhanced_dataset
+                            st.session_state.analysis_done = True
                             st.success("✅ Textual Analysis Completed!")
-                            
-                            # Display enhanced dataset preview
-                            st.subheader("📈 Enhanced Dataset Preview")
-                            st.dataframe(enhanced_dataset.head())
-                            
-                            # Download enhanced dataset
-                            csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
-                            st.download_button(
-                                label="📥 Download Enhanced Dataset (CSV)",
-                                data=csv,
-                                file_name="enhanced_dataset.csv",
-                                mime="text/csv",
-                            )
-                            
-                            # Generate and display bar plots for each category
-                            for category in selected_categories:
-                                column_name = f"{category}_detected_words"
-                                if column_name in enhanced_dataset.columns:
-                                    st.subheader(f"📊 Top Words in '{category}' Category")
-                                    # Allow user to select number of top words
-                                    top_n = st.number_input(f"Select number of top words to display for '{category}':", min_value=1, max_value=50, value=10, step=1, key=f"top_n_{category}")
-                                    generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
-                            
-                            # Divider before statistical analyses
-                            st.markdown("---")
-                            
-                            # Statistical Analyses Section
-                            st.subheader("📊 Statistical Analyses")
-                            
-                            # Create tabs for correlation and ANOVA
-                            analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
-                            
-                            with analysis_tab:
-                                perform_pearson_correlation(enhanced_dataset)
-                            
-                            with anova_tab:
-                                perform_anova(enhanced_dataset)
-            else:
-                st.info("📌 Please select at least one category to analyze.")
+                    
+                # If analysis is done, display results and allow statistical analyses
+                if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
+                    enhanced_dataset = st.session_state.enhanced_dataset
+                    # Display enhanced dataset preview
+                    st.subheader("📈 Enhanced Dataset Preview")
+                    st.dataframe(enhanced_dataset.head())
+                    
+                    # Download enhanced dataset
+                    csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Enhanced Dataset (CSV)",
+                        data=csv,
+                        file_name="enhanced_dataset.csv",
+                        mime="text/csv",
+                    )
+                    
+                    # Generate and display word plots for each category
+                    st.subheader("📊 Word Frequency Analysis")
+                    for category in selected_categories:
+                        column_name = f"{category}_detected_words"
+                        if column_name in enhanced_dataset.columns:
+                            st.markdown(f"**{category}**")
+                            # Allow user to select number of top words
+                            top_n = st.number_input(f"Select number of top words to display for '{category}':", 
+                                                    min_value=1, 
+                                                    max_value=50, 
+                                                    value=10, 
+                                                    step=1, 
+                                                    key=f"top_n_{category}")
+                            generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
+                    
+                    # Divider before statistical analyses
+                    st.markdown("---")
+                    
+                    # Statistical Analyses Section
+                    st.subheader("📊 Statistical Analyses")
+                    
+                    # Create tabs for correlation and ANOVA
+                    analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
+                    
+                    with analysis_tab:
+                        perform_pearson_correlation(enhanced_dataset)
+                    
+                    with anova_tab:
+                        perform_anova(enhanced_dataset)
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
     
