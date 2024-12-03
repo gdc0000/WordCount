@@ -370,7 +370,8 @@ def perform_anova(enhanced_df: pd.DataFrame):
             orientation='h',
             error_x='std',
             title=f'Bar Plot of {num_var} by {cat_var} with Standard Deviation',
-            labels={'mean': f'Mean of {num_var}', cat_var: cat_var}
+            labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
+            height=600
         )
         fig.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig, use_container_width=True)
@@ -412,22 +413,47 @@ def main():
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary
+            # Display wordlist summary as Plotly horizontal bar plot
             st.subheader("📃 Wordlist Summary")
-            categories = list(exact_words.keys())
-            st.write(f"**Categories:** {', '.join(categories)}")
-            for category in categories:
-                st.write(f"**{category}:**")
-                st.write(f" - Exact Words: {len(exact_words[category])}")
-                st.write(f" - Wildcard Prefixes: {len(wildcard_prefixes[category])}")
-                # Show sample wordlist
-                sample_exact = list(exact_words[category])[:5]
-                sample_wildcard = wildcard_prefixes[category][:5]
-                st.write(f"   - Sample Exact Words: {sample_exact if sample_exact else 'None'}")
-                st.write(f"   - Sample Wildcard Prefixes: {sample_wildcard if sample_wildcard else 'None'}")
+            
+            # Prepare data for the summary plot
+            summary_data = []
+            for category in exact_words.keys():
+                word_count = len(exact_words[category])
+                if word_count == 0:
+                    examples = "None"
+                else:
+                    sorted_words = sorted(exact_words[category])
+                    top_three = sorted_words[:3]
+                    bottom_three = sorted_words[-3:] if word_count >=6 else sorted_words[3:]
+                    examples = ', '.join(top_three + bottom_three)
+                summary_data.append({
+                    'Category': category,
+                    'Word Count': word_count,
+                    'Examples': examples
+                })
+            
+            summary_df = pd.DataFrame(summary_data)
+            
+            # Create a Plotly horizontal bar plot
+            fig_summary = px.bar(
+                summary_df,
+                x='Word Count',
+                y='Category',
+                orientation='h',
+                text=summary_df.apply(lambda row: f"{row['Word Count']} ({row['Examples']})", axis=1),
+                title="📊 Wordlist Categories Summary",
+                labels={'Word Count': 'Number of Words', 'Category': 'Category'},
+                height=600
+            )
+            
+            fig_summary.update_traces(textposition='inside', textfont_size=12, marker_color='indigo')
+            fig_summary.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
+            
+            st.plotly_chart(fig_summary, use_container_width=True)
             
             # Select categories to analyze
-            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=categories, default=categories)
+            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=summary_df['Category'], default=summary_df['Category'])
             
             if selected_categories:
                 # Select text column
