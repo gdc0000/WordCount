@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-from typing import List, Tuple
+from typing import List, Dict, Tuple
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
@@ -27,42 +27,65 @@ def load_dataset(uploaded_file):
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
             return pd.read_excel(uploaded_file)
         else:
-            st.error("Unsupported file format. Please upload a CSV or Excel file.")
+            st.error("Unsupported file format for dataset. Please upload a CSV or Excel file.")
             return None
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
         return None
 
 @st.cache_data
-def load_wordlist(uploaded_file):
+def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
     """
-    Load and preprocess a wordlist from a CSV file.
+    Load and preprocess a multi-category wordlist from a CSV, TXT, DIC, or XLSX file.
     
     Parameters:
         uploaded_file: Uploaded file object from Streamlit.
         
     Returns:
         Tuple containing:
-            - Set of exact words
-            - List of wildcard prefixes
+            - Dictionary mapping categories to exact words
+            - Dictionary mapping categories to wildcard prefixes
     """
     try:
-        wordlist_df = pd.read_csv(uploaded_file)
-        if 'word' not in wordlist_df.columns:
-            st.error("The wordlist CSV must contain a column named 'word'.")
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        if file_extension == 'csv':
+            wordlist_df = pd.read_csv(uploaded_file)
+        elif file_extension in ['txt', 'dic']:
+            # Assume tab-separated for TXT and DIC files
+            wordlist_df = pd.read_csv(uploaded_file, sep='\t')
+        elif file_extension in ['xls', 'xlsx']:
+            wordlist_df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file format for wordlist. Please upload a CSV, TXT, DIC, or Excel file.")
             return None, None
-        # Drop NaN and convert to lowercase
-        wordlist = wordlist_df['word'].dropna().astype(str).str.lower().tolist()
-        # Split into exact words and wildcard prefixes
-        exact_words = set()
-        wildcard_prefixes = []
-        for word in wordlist:
-            if word.endswith('*'):
-                prefix = word[:-1]
-                if prefix:  # Avoid empty prefix
-                    wildcard_prefixes.append(prefix)
-            else:
-                exact_words.add(word)
+        
+        if 'DicTerm' not in wordlist_df.columns:
+            st.error("The wordlist file must contain a column named 'DicTerm'.")
+            return None, None
+        
+        # Identify category columns (excluding 'DicTerm')
+        category_columns = [col for col in wordlist_df.columns if col != 'DicTerm']
+        if not category_columns:
+            st.error("No category columns found in the wordlist file.")
+            return None, None
+        
+        # Initialize dictionaries
+        exact_words = {category: set() for category in category_columns}
+        wildcard_prefixes = {category: [] for category in category_columns}
+        
+        # Iterate over each row and assign words to categories
+        for _, row in wordlist_df.iterrows():
+            word = str(row['DicTerm']).strip().lower()
+            for category in category_columns:
+                cell_value = row[category]
+                if pd.notna(cell_value) and str(cell_value).strip().upper() == 'X':
+                    if word.endswith('*'):
+                        prefix = word[:-1]
+                        if prefix:  # Avoid empty prefix
+                            wildcard_prefixes[category].append(prefix)
+                    else:
+                        exact_words[category].add(word)
+        
         return exact_words, wildcard_prefixes
     except Exception as e:
         st.error(f"Error loading wordlist: {e}")
@@ -83,27 +106,20 @@ def clean_and_tokenize(document: str) -> List[str]:
     tokens = clean_doc.split()
     return tokens
 
-def process_document(doc: str, exact_words: set, wildcard_prefixes: List[str]) -> Tuple[int, int, int, float, List[str]]:
+def count_words(tokens: List[str], exact_words: set, wildcard_prefixes: List[str]) -> Tuple[int, List[str]]:
     """
-    Process a single document and return analysis metrics.
+    Count words in tokens based on exact matches and wildcard prefixes.
     
     Parameters:
-        doc: The text document as a string.
+        tokens: List of tokens from the document.
         exact_words: Set of exact words to match.
         wildcard_prefixes: List of prefixes for wildcard matching.
         
     Returns:
         Tuple containing:
-            - Number of tokens
-            - Number of types
             - Count of wordlist identified
-            - Proportion of wordlist words per token
             - List of detected words
     """
-    tokens = clean_and_tokenize(doc)
-    n_tokens = len(tokens)
-    n_types = len(set(tokens))
-    
     detected_words = set()
     count = 0
     
@@ -118,64 +134,91 @@ def process_document(doc: str, exact_words: set, wildcard_prefixes: List[str]) -
         detected_words.update(matches)
         count += len(matches)
     
-    word_perc = count / n_tokens if n_tokens > 0 else 0.0
     detected_words_list = list(detected_words)
-    
-    return n_tokens, n_types, count, word_perc, detected_words_list
+    return count, detected_words_list
 
-def analyze_text(documents: pd.Series, exact_words: set, wildcard_prefixes: List[str], progress_bar) -> pd.DataFrame:
+def analyze_text(documents: pd.Series, exact_words: Dict[str, set], wildcard_prefixes: Dict[str, List[str]], progress_bar) -> pd.DataFrame:
     """
-    Analyze text in documents using the wordlist.
+    Analyze text in documents using multiple wordlists.
     
     Parameters:
         documents: pandas Series containing text data.
-        exact_words: Set of exact words to match.
-        wildcard_prefixes: List of prefixes for wildcard matching.
+        exact_words: Dictionary mapping categories to exact words.
+        wildcard_prefixes: Dictionary mapping categories to wildcard prefixes.
         progress_bar: Streamlit progress bar object.
         
     Returns:
-        pandas.DataFrame with analysis results.
+        pandas.DataFrame with analysis results for each category and global metrics.
     """
-    analysis_results = []
+    # Initialize lists for global metrics
+    n_tokens_list = []
+    n_types_list = []
+    
+    # Initialize a dictionary to hold results for each category
+    analysis_results = {category: {
+        'word_count': [],
+        'word_perc': [],
+        'detected_words': []
+    } for category in exact_words.keys()}
+    
     total_docs = len(documents)
+    
     for i, doc in enumerate(documents):
         if pd.isna(doc):
             doc = ""
-        n_tokens, n_types, count, word_perc, detected_words = process_document(doc, exact_words, wildcard_prefixes)
-        analysis_results.append({
-            'n_tokens': n_tokens,
-            'n_types': n_types,
-            'word_count': count,
-            'word_perc': word_perc,
-            'detected_words': detected_words
-        })
+        tokens = clean_and_tokenize(doc)
+        n_tokens = len(tokens)
+        n_types = len(set(tokens))
+        
+        # Append global metrics
+        n_tokens_list.append(n_tokens)
+        n_types_list.append(n_types)
+        
+        for category in exact_words.keys():
+            ew = exact_words[category]
+            wp = wildcard_prefixes[category]
+            count, detected = count_words(tokens, ew, wp)
+            word_perc = count / n_tokens if n_tokens > 0 else 0.0
+            analysis_results[category]['word_count'].append(count)
+            analysis_results[category]['word_perc'].append(word_perc)
+            analysis_results[category]['detected_words'].append(detected)
+        
         # Update progress every 100 documents or at the end
         if (i + 1) % 100 == 0 or i == total_docs -1:
             progress = (i + 1) / total_docs
             progress_bar.progress(progress)
-    analysis_df = pd.DataFrame(analysis_results)
+    
+    # Create a DataFrame for global metrics
+    global_metrics = pd.DataFrame({
+        'n_tokens': n_tokens_list,
+        'n_types': n_types_list
+    })
+    
+    # Create DataFrames for each category
+    category_metrics = {}
+    for category, metrics in analysis_results.items():
+        category_metrics[f"{category}_word_count"] = metrics['word_count']
+        category_metrics[f"{category}_word_perc"] = metrics['word_perc']
+        category_metrics[f"{category}_detected_words"] = metrics['detected_words']
+    
+    category_metrics_df = pd.DataFrame(category_metrics)
+    
+    # Combine global metrics with category metrics
+    analysis_df = pd.concat([global_metrics, category_metrics_df], axis=1)
     return analysis_df
 
-def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame, label: str) -> pd.DataFrame:
+def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.DataFrame:
     """
     Enhance the original dataset with analysis results.
     
     Parameters:
         dataset: Original pandas DataFrame.
         analysis_df: DataFrame containing analysis results.
-        label: Label/category name for the wordlist.
         
     Returns:
         Enhanced pandas DataFrame.
     """
     dataset = dataset.reset_index(drop=True)
-    analysis_df = analysis_df.rename(columns={
-        'n_tokens': f'{label}_n_tokens',
-        'n_types': f'{label}_n_types',
-        'word_count': f'{label}_word_count',
-        'word_perc': f'{label}_word_perc',
-        'detected_words': f'{label}_detected_words'
-    })
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
@@ -190,7 +233,7 @@ def generate_wordcloud(detected_words_series: pd.Series, label: str) -> None:
     # Flatten the list of detected words
     all_detected_words = [word for sublist in detected_words_series for word in sublist]
     if not all_detected_words:
-        st.warning("No words detected to generate a word cloud.")
+        st.warning(f"No words detected for category '{label}' to generate a word cloud.")
         return
     
     # Count word frequencies
@@ -232,7 +275,7 @@ def main():
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
-    uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV)", type=["csv"])
+    uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV, TXT, DIC, or Excel)", type=["csv", "txt", "dic", "xls", "xlsx"])
     
     if uploaded_dataset and uploaded_wordlist:
         # Load dataset
@@ -248,18 +291,22 @@ def main():
             
             # Display wordlist summary
             st.subheader("📃 Wordlist Summary")
-            st.write(f"**Exact Words:** {len(exact_words)}")
-            st.write(f"**Wildcard Prefixes:** {len(wildcard_prefixes)}")
-            # Show sample wordlist
-            sample_exact = list(exact_words)[:5]
-            sample_wildcard = wildcard_prefixes[:5]
-            st.write("**Sample Exact Words:**", sample_exact)
-            st.write("**Sample Wildcard Prefixes:**", sample_wildcard)
+            categories = list(exact_words.keys())
+            st.write(f"**Categories:** {', '.join(categories)}")
+            for category in categories:
+                st.write(f"**{category}:**")
+                st.write(f" - Exact Words: {len(exact_words[category])}")
+                st.write(f" - Wildcard Prefixes: {len(wildcard_prefixes[category])}")
+                # Show sample wordlist
+                sample_exact = list(exact_words[category])[:5]
+                sample_wildcard = wildcard_prefixes[category][:5]
+                st.write(f"   - Sample Exact Words: {sample_exact if sample_exact else 'None'}")
+                st.write(f"   - Sample Wildcard Prefixes: {sample_wildcard if sample_wildcard else 'None'}")
             
-            # User input for label
-            label = st.text_input("📝 Enter the label/category name for this wordlist (e.g., 'Emotions')").strip()
+            # Select categories to analyze
+            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=categories, default=categories)
             
-            if label:
+            if selected_categories:
                 # Select text column
                 text_columns = dataset.select_dtypes(include=['object', 'string']).columns.tolist()
                 if not text_columns:
@@ -272,8 +319,11 @@ def main():
                         with st.spinner("🔄 Performing Textual Analysis... This may take a while for large datasets."):
                             documents = dataset[text_column].astype(str)
                             progress_bar = st.progress(0)
-                            analysis_df = analyze_text(documents, exact_words, wildcard_prefixes, progress_bar)
-                            enhanced_dataset = enhance_dataset(dataset, analysis_df, label)
+                            # Filter wordlists based on selected categories
+                            selected_exact_words = {cat: exact_words[cat] for cat in selected_categories}
+                            selected_wildcard_prefixes = {cat: wildcard_prefixes[cat] for cat in selected_categories}
+                            analysis_df = analyze_text(documents, selected_exact_words, selected_wildcard_prefixes, progress_bar)
+                            enhanced_dataset = enhance_dataset(dataset, analysis_df)
                             st.success("✅ Textual Analysis Completed!")
                             
                             # Display enhanced dataset preview
@@ -289,11 +339,14 @@ def main():
                                 mime="text/csv",
                             )
                             
-                            # Generate and display word cloud
-                            st.subheader("🌐 Word Cloud of Detected Words")
-                            generate_wordcloud(enhanced_dataset[f"{label}_detected_words"], label)
+                            # Generate and display word clouds for each category
+                            for category in selected_categories:
+                                column_name = f"{category}_detected_words"
+                                if column_name in enhanced_dataset.columns:
+                                    st.subheader(f"🌐 Word Cloud of Detected Words for '{category}'")
+                                    generate_wordcloud(enhanced_dataset[column_name], category)
             else:
-                st.info("📝 Please enter a label for the wordlist.")
+                st.info("📌 Please select at least one category to analyze.")
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
     
