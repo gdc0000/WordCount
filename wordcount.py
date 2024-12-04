@@ -115,6 +115,27 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], 
         st.error(f"Error loading wordlist: {e}")
         return None, None, None, None
 
+def make_unique(columns):
+    """
+    Ensure all column names are unique by appending suffixes to duplicates.
+    
+    Parameters:
+        columns (Index): pandas Index object containing column names.
+        
+    Returns:
+        List[str]: List of unique column names.
+    """
+    seen = {}
+    unique_columns = []
+    for col in columns:
+        if col not in seen:
+            seen[col] = 1
+            unique_columns.append(col)
+        else:
+            seen[col] += 1
+            unique_columns.append(f"{col}_{seen[col]}")
+    return unique_columns
+
 def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
     """
     Clean and tokenize a document, generating both unigrams and n-grams up to max_n.
@@ -310,6 +331,9 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     
     # Sanitize Column Names: Replace spaces and special characters with underscores
     enhanced_dataset.columns = enhanced_dataset.columns.str.replace(' ', '_').str.replace('[^A-Za-z0-9_]', '', regex=True)
+    
+    # Ensure all column names are unique
+    enhanced_dataset.columns = make_unique(enhanced_dataset.columns)
     
     # Check and Add 'n_tokens' and 'n_types' Only If They Don't Exist
     if 'n_tokens' not in enhanced_dataset.columns:
@@ -681,19 +705,6 @@ def main():
     if ('analysis_done' in st.session_state and st.session_state.analysis_done and
         'enhanced_dataset' in st.session_state and st.session_state.enhanced_dataset is not None):
         enhanced_dataset = st.session_state.enhanced_dataset
-        # Display data types of enhanced_dataset for debugging
-        st.subheader("📑 Enhanced Dataset Data Types")
-        st.write(enhanced_dataset.dtypes)
-        
-        # **Debugging: Check for problematic columns**
-        st.subheader("🔍 Column Data Types Check")
-        for col in enhanced_dataset.columns:
-            if enhanced_dataset[col].dtype == 'object':
-                unique_types = enhanced_dataset[col].apply(type).unique()
-                if len(unique_types) > 1:
-                    st.write(f"**Column '{col}'** has multiple data types: {unique_types}")
-                else:
-                    st.write(f"**Column '{col}'** has data type: {unique_types[0]}")
         
         # Display enhanced dataset preview
         st.subheader("📈 Enhanced Dataset Preview")
