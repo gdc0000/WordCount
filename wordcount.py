@@ -272,18 +272,35 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
         analysis_df: DataFrame containing analysis results.
         
     Returns:
-        Enhanced pandas DataFrame with converted 'detected_words' columns.
+        Enhanced pandas DataFrame with converted columns suitable for Streamlit.
     """
     dataset = dataset.reset_index(drop=True)
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
 
-    # Identify all columns that contain list-like data
+    # Identify all columns that contain list-like data or other complex types
     list_columns = enhanced_dataset.columns[enhanced_dataset.applymap(lambda x: isinstance(x, list)).any()]
+    dict_columns = enhanced_dataset.columns[enhanced_dataset.applymap(lambda x: isinstance(x, dict)).any()]
+    set_columns = enhanced_dataset.columns[enhanced_dataset.applymap(lambda x: isinstance(x, set)).any()]
 
-    for col in list_columns:
-        enhanced_dataset[col] = enhanced_dataset[col].apply(
-            lambda x: ', '.join(x) if isinstance(x, list) and x else ''
-        )
+    # Function to convert list-like objects to comma-separated strings
+    def convert_to_string(x):
+        if isinstance(x, list):
+            return ', '.join(map(str, x))
+        elif isinstance(x, dict):
+            return ', '.join([f"{k}: {v}" for k, v in x.items()])
+        elif isinstance(x, set):
+            return ', '.join(map(str, x))
+        else:
+            return x
+
+    # Convert identified columns
+    for col in list_columns.tolist() + dict_columns.tolist() + set_columns.tolist():
+        enhanced_dataset[col] = enhanced_dataset[col].apply(convert_to_string)
+
+    # Additionally, ensure that any remaining object-type columns contain only strings
+    object_columns = enhanced_dataset.select_dtypes(include=['object']).columns.tolist()
+    for col in object_columns:
+        enhanced_dataset[col] = enhanced_dataset[col].astype(str)
 
     return enhanced_dataset
 
@@ -570,7 +587,7 @@ def main():
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
     uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV, TXT, DIC, DICX, or Excel)", type=["csv", "txt", "dic", "dicx", "xls", "xlsx"])
-    
+
     if uploaded_dataset and uploaded_wordlist:
         # Load dataset
         dataset = load_dataset(uploaded_dataset)
@@ -625,82 +642,82 @@ def main():
                             st.session_state.enhanced_dataset = enhanced_dataset
                             st.session_state.analysis_done = True
                             st.success("✅ Textual Analysis Completed!")
+            
+            # If analysis is done, display results and allow statistical analyses
+            if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
+                enhanced_dataset = st.session_state.enhanced_dataset
+                # Display data types of enhanced_dataset for debugging
+                st.subheader("📑 Enhanced Dataset Data Types")
+                st.write(enhanced_dataset.dtypes)
                 
-                # If analysis is done, display results and allow statistical analyses
-                if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
-                    enhanced_dataset = st.session_state.enhanced_dataset
-                    # Display data types of enhanced_dataset for debugging
-                    st.subheader("📑 Enhanced Dataset Data Types")
-                    st.write(enhanced_dataset.dtypes)
-                    
-                    # Display enhanced dataset preview
-                    st.subheader("📈 Enhanced Dataset Preview")
-                    st.dataframe(enhanced_dataset.head())
-                    
-                    # Download enhanced dataset
-                    csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Enhanced Dataset (CSV)",
-                        data=csv,
-                        file_name="enhanced_dataset.csv",
-                        mime="text/csv",
-                    )
-                    
-                    # Generate and display bar plots for selected categories based on user selection
-                    st.subheader("📊 Word Frequency Analysis")
-                    
-                    # User selects which categories to display bar plots for
-                    plot_categories = st.multiselect(
-                        "🔎 Select Categories to Display Bar Plots:",
-                        options=selected_categories,
-                        default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
-                    )
-                    
-                    if plot_categories:
-                        # Create chunks of three categories each for layout
-                        for i in range(0, len(plot_categories), 3):
-                            cols = st.columns(3)
-                            for j, category in enumerate(plot_categories[i:i+3]):
-                                with cols[j]:
-                                    st.markdown(f"**{category}**")
-                                    # Allow user to select number of top words, default to 3
-                                    top_n = st.number_input(
-                                        f"Select number of top words/phrases to display for '{category}':", 
-                                        min_value=1, 
-                                        max_value=50, 
-                                        value=3,  # Default value set to 3
-                                        step=1, 
-                                        key=f"top_n_{category}"
-                                    )
-                                    column_name_wc = f"{category}_word_count"
-                                    column_name_dw = f"{category}_detected_words"
-                                    if column_name_dw in enhanced_dataset.columns:
-                                        generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
-                                    else:
-                                        st.warning(f"No detected words data available for category '{category}'.")
-                    
-                    else:
-                        st.info("🔎 Please select at least one category to display bar plots.")
-                    
-                    # Divider before statistical analyses
-                    st.markdown("---")
-                    
-                    # Statistical Analyses Section
-                    st.subheader("📊 Statistical Analyses")
-                    
-                    # Create tabs for correlation and ANOVA
-                    analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
-                    
-                    with analysis_tab:
-                        perform_pearson_correlation(enhanced_dataset)
-                    
-                    with anova_tab:
-                        perform_anova(enhanced_dataset)
-            else:
-                st.info("📌 Please select at least one category to analyze.")
+                # Display enhanced dataset preview
+                st.subheader("📈 Enhanced Dataset Preview")
+                st.dataframe(enhanced_dataset.head())
+                
+                # Download enhanced dataset
+                csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Enhanced Dataset (CSV)",
+                    data=csv,
+                    file_name="enhanced_dataset.csv",
+                    mime="text/csv",
+                )
+                
+                # Generate and display bar plots for selected categories based on user selection
+                st.subheader("📊 Word Frequency Analysis")
+                
+                # User selects which categories to display bar plots for
+                plot_categories = st.multiselect(
+                    "🔎 Select Categories to Display Bar Plots:",
+                    options=selected_categories,
+                    default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
+                )
+                
+                if plot_categories:
+                    # Create chunks of three categories each for layout
+                    for i in range(0, len(plot_categories), 3):
+                        cols = st.columns(3)
+                        for j, category in enumerate(plot_categories[i:i+3]):
+                            with cols[j]:
+                                st.markdown(f"**{category}**")
+                                # Allow user to select number of top words, default to 3
+                                top_n = st.number_input(
+                                    f"Select number of top words/phrases to display for '{category}':", 
+                                    min_value=1, 
+                                    max_value=50, 
+                                    value=3,  # Default value set to 3
+                                    step=1, 
+                                    key=f"top_n_{category}"
+                                )
+                                column_name_wc = f"{category}_word_count"
+                                column_name_dw = f"{category}_detected_words"
+                                if column_name_dw in enhanced_dataset.columns:
+                                    generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
+                                else:
+                                    st.warning(f"No detected words data available for category '{category}'.")
+                
+                else:
+                    st.info("🔎 Please select at least one category to display bar plots.")
+                
+                # Divider before statistical analyses
+                st.markdown("---")
+                
+                # Statistical Analyses Section
+                st.subheader("📊 Statistical Analyses")
+                
+                # Create tabs for correlation and ANOVA
+                analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
+                
+                with analysis_tab:
+                    perform_pearson_correlation(enhanced_dataset)
+                
+                with anova_tab:
+                    perform_anova(enhanced_dataset)
+        else:
+            st.info("📌 Please upload both the dataset and the wordlist to begin.")
     else:
         st.info("📌 Please upload both the dataset and the wordlist to begin.")
-    
+
     # Footer
     st.markdown("""
     ---
