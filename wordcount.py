@@ -272,10 +272,19 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
         analysis_df: DataFrame containing analysis results.
         
     Returns:
-        Enhanced pandas DataFrame.
+        Enhanced pandas DataFrame with converted 'detected_words' columns.
     """
     dataset = dataset.reset_index(drop=True)
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
+
+    # Identify columns that contain 'detected_words' and convert lists to strings
+    detected_words_columns = [col for col in enhanced_dataset.columns if 'detected_words' in col]
+
+    for col in detected_words_columns:
+        enhanced_dataset[col] = enhanced_dataset[col].apply(
+            lambda x: ', '.join(x) if isinstance(x, list) and x else ''
+        )
+
     return enhanced_dataset
 
 def generate_summary_list(exact_single_words: Dict[str, set],
@@ -322,7 +331,7 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
         top_n: Number of top words to display.
     """
     # Flatten the list of detected words
-    all_detected_words = [word for sublist in detected_words_series for word in sublist]
+    all_detected_words = [word.strip() for sublist in detected_words_series for word in sublist.split(',') if word.strip()]
     if not all_detected_words:
         st.warning(f"No words detected for category '{label}' to generate a bar plot.")
         return
@@ -449,262 +458,3 @@ def perform_anova(enhanced_df: pd.DataFrame):
         # Perform Tukey's HSD Post Hoc Test
         tukey = pairwise_tukeyhsd(endog=df_clean[num_var], groups=df_clean[cat_var], alpha=0.05)
         tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
-        
-        st.write("**Tukey's HSD Post Hoc Comparisons:**")
-        st.table(tukey_df)
-        
-        # Generate Plotly bar plot with 95% Confidence Intervals
-        group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'sem']).reset_index()
-        group_stats.rename(columns={'sem': 'standard_error'}, inplace=True)
-        group_stats['ci_lower'] = group_stats['mean'] - 1.96 * group_stats['standard_error']
-        group_stats['ci_upper'] = group_stats['mean'] + 1.96 * group_stats['standard_error']
-        
-        fig = px.bar(
-            group_stats, 
-            x='mean', 
-            y=cat_var, 
-            orientation='h',
-            title=f'Bar Plot of {num_var} by {cat_var} with 95% Confidence Intervals',
-            labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
-            error_x='standard_error',
-            height=600  # Adjusted height for better visibility
-        )
-        fig.update_layout(yaxis={'categoryorder':'total ascending'})
-        
-        # Add confidence interval lines manually
-        for i, row in group_stats.iterrows():
-            fig.add_shape(
-                type="line",
-                x0=row['ci_lower'], y0=i, x1=row['ci_upper'], y1=i,
-                line=dict(color="black", width=2)
-            )
-        
-        st.plotly_chart(fig, use_container_width=True)
-
-# =========================
-#        STREAMLIT APP
-# =========================
-
-def main():
-    # Initialize session_state variables if they don't exist
-    if 'analysis_done' not in st.session_state:
-        st.session_state.analysis_done = False
-    if 'enhanced_dataset' not in st.session_state:
-        st.session_state.enhanced_dataset = None
-
-    # Configure Streamlit page
-    st.set_page_config(page_title="TextInsight Analyzer", layout="wide")
-    st.title("📊 TextInsight Analyzer")
-    
-    # Visual Introduction
-    st.markdown("""
-    ## 👋 Welcome to TextInsight Analyzer!
-
-    **TextInsight Analyzer** is a tool designed to help you analyze textual data by leveraging customizable wordlists. Here's how to get started:
-
-    ### 📁 Expected Files
-
-    #### 1. **Dataset File**
-    - **Format:** CSV or Excel (`.csv`, `.xls`, `.xlsx`)
-    - **Requirements:**
-        - Must contain at least one column with textual data.
-        - Example columns:
-            - `id`: Unique identifier for each entry.
-            - `text`: The column containing the text you want to analyze.
-    - **Sample Format:**
-    
-        | id | text                                      |
-        |----|-------------------------------------------|
-        | 1  | I am happy and joyful today.             |
-        | 2  | This is a sad and gloomy day.             |
-        | ...| ...                                       |
-
-    #### 2. **Wordlist (Dictionary) File**
-    - **Format:** CSV, TXT, DIC, DICX, or Excel (`.csv`, `.txt`, `.dic`, `.dicx`, `.xls`, `.xlsx`)
-    - **Requirements:**
-        - Must contain a column named `DicTerm` with the words to analyze.
-        - Additional columns represent categories. Mark a word for a category with an `X`.
-        - **Wildcard Prefixes:** To indicate prefix matching, end a word with an asterisk (`*`). For example, `run*` will match `running`, `runner`, etc.
-    - **Sample Format:**
-    
-        | DicTerm       | Conservation | SelfTranscendence | OpennessToChange |
-        |---------------|--------------|--------------------|-------------------|
-        | abide         | X            |                    |                   |
-        | ability       |              |                    | X                 |
-        | accept        | X            |                    |                   |
-        | act*          |              |                    | X                 |
-        | ...           | ...          | ...                | ...               |
-
-    ### 🛠️ Getting Started
-
-    1. **Upload Files:**
-        - Use the sidebar to upload your **Dataset** and **Wordlist** files.
-    
-    2. **Preview Data:**
-        - After uploading, preview your dataset and review the wordlist summary.
-    
-    3. **Select Categories:**
-        - Choose which categories from your wordlist you want to analyze.
-    
-    4. **Perform Analysis:**
-        - Select the text column and start the analysis.
-    
-    5. **View Results:**
-        - Explore the enhanced dataset, word frequency bar plots, and perform statistical analyses like Pearson Correlation and ANOVA.
-    
-    ### 📌 Notes
-    - Ensure that your wordlist is properly formatted to achieve accurate analysis results.
-    - The tool is intended for educational and research purposes. It may not cover all edge cases or complex textual nuances.
-    """)
-    
-    # Sidebar for file uploads
-    st.sidebar.header("📥 Upload Files")
-    uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
-    uploaded_wordlist = st.sidebar.file_uploader("Upload your wordlist (CSV, TXT, DIC, DICX, or Excel)", type=["csv", "txt", "dic", "dicx", "xls", "xlsx"])
-    
-    if uploaded_dataset and uploaded_wordlist:
-        # Load dataset
-        dataset = load_dataset(uploaded_dataset)
-        
-        # Load wordlist
-        exact_single_words, wildcard_single_prefixes, exact_multi_words, wildcard_multi_prefixes = load_wordlist(uploaded_wordlist)
-        
-        if (dataset is not None and exact_single_words is not None and
-            wildcard_single_prefixes is not None and exact_multi_words is not None and
-            wildcard_multi_prefixes is not None):
-            # Display dataset preview
-            st.subheader("📄 Dataset Preview")
-            st.dataframe(dataset.head())
-            
-            # Display wordlist summary as a simple list with top 3 and bottom 3 words/phrases
-            st.subheader("📃 Wordlist Summary")
-            summary_text = generate_summary_list(exact_single_words, exact_multi_words)
-            st.markdown(summary_text)
-            
-            # Select categories to analyze
-            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=list(exact_single_words.keys()), default=list(exact_single_words.keys()))
-            
-            if selected_categories:
-                # Select text column
-                text_columns = dataset.select_dtypes(include=['object', 'string']).columns.tolist()
-                if not text_columns:
-                    st.error("❌ No text columns found in the dataset. Please upload a dataset with at least one text column.")
-                else:
-                    text_column = st.selectbox("🔍 Select the column containing text data:", text_columns)
-                    
-                    # Start Analysis Button
-                    if st.button("🚀 Start Analysis"):
-                        with st.spinner("🔄 Performing Textual Analysis... This may take a while for large datasets."):
-                            documents = dataset[text_column].astype(str)
-                            progress_bar = st.progress(0)
-                            # Filter wordlists based on selected categories
-                            selected_exact_single = {cat: exact_single_words[cat] for cat in selected_categories}
-                            selected_wildcard_single = {cat: wildcard_single_prefixes[cat] for cat in selected_categories}
-                            selected_exact_multi = {cat: exact_multi_words[cat] for cat in selected_categories}
-                            selected_wildcard_multi = {cat: wildcard_multi_prefixes[cat] for cat in selected_categories}
-                            
-                            analysis_df = analyze_text(
-                                documents,
-                                selected_exact_single,
-                                selected_wildcard_single,
-                                selected_exact_multi,
-                                selected_wildcard_multi,
-                                progress_bar
-                            )
-                            enhanced_dataset = enhance_dataset(dataset, analysis_df)
-                            # Store enhanced_dataset in session_state
-                            st.session_state.enhanced_dataset = enhanced_dataset
-                            st.session_state.analysis_done = True
-                            st.success("✅ Textual Analysis Completed!")
-                
-                # If analysis is done, display results and allow statistical analyses
-                if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
-                    enhanced_dataset = st.session_state.enhanced_dataset
-                    # Display enhanced dataset preview
-                    st.subheader("📈 Enhanced Dataset Preview")
-                    st.dataframe(enhanced_dataset.head())
-                    
-                    # Download enhanced dataset
-                    csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Enhanced Dataset (CSV)",
-                        data=csv,
-                        file_name="enhanced_dataset.csv",
-                        mime="text/csv",
-                    )
-                    
-                    # Generate and display bar plots for selected categories based on user selection
-                    st.subheader("📊 Word Frequency Analysis")
-                    
-                    # User selects which categories to display bar plots for
-                    plot_categories = st.multiselect(
-                        "🔎 Select Categories to Display Bar Plots:",
-                        options=selected_categories,
-                        default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
-                    )
-                    
-                    if plot_categories:
-                        # Create chunks of three categories each for layout
-                        for i in range(0, len(plot_categories), 3):
-                            cols = st.columns(3)
-                            for j, category in enumerate(plot_categories[i:i+3]):
-                                with cols[j]:
-                                    st.markdown(f"**{category}**")
-                                    # Allow user to select number of top words, default to 3
-                                    top_n = st.number_input(
-                                        f"Select number of top words/phrases to display for '{category}':", 
-                                        min_value=1, 
-                                        max_value=50, 
-                                        value=3,  # Default value set to 3
-                                        step=1, 
-                                        key=f"top_n_{category}"
-                                    )
-                                    column_name_wc = f"{category}_word_count"
-                                    column_name_dw = f"{category}_detected_words"
-                                    if column_name_dw in enhanced_dataset.columns:
-                                        generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
-                                    else:
-                                        st.warning(f"No detected words data available for category '{category}'.")
-                    
-                    else:
-                        st.info("🔎 Please select at least one category to display bar plots.")
-                    
-                    # Divider before statistical analyses
-                    st.markdown("---")
-                    
-                    # Statistical Analyses Section
-                    st.subheader("📊 Statistical Analyses")
-                    
-                    # Create tabs for correlation and ANOVA
-                    analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
-                    
-                    with analysis_tab:
-                        perform_pearson_correlation(enhanced_dataset)
-                    
-                    with anova_tab:
-                        perform_anova(enhanced_dataset)
-            else:
-                st.info("📌 Please select at least one category to analyze.")
-    else:
-        st.info("📌 Please upload both the dataset and the wordlist to begin.")
-    
-    # Footer
-    st.markdown("""
-    ---
-    <span style="font-size:0.9em; color:gray;">
-    **Note:** This tool is intended for educational and research purposes only. It is a simplified version and does not offer the comprehensive 
-    features or performance of professional-grade software.
-    </span>
-    """, unsafe_allow_html=True)
-
-    # Footer with professional references
-    st.markdown("---")
-    st.markdown("### **Gabriele Di Cicco, PhD in Social Psychology**")
-    st.markdown("""
-    [GitHub](https://github.com/gdc0000) | 
-    [ORCID](https://orcid.org/0000-0002-1439-5790) | 
-    [LinkedIn](https://www.linkedin.com/in/gabriele-di-cicco-124067b0/)
-    """)
-
-if __name__ == "__main__":
-    main()
