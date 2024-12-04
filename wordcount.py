@@ -277,10 +277,10 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     dataset = dataset.reset_index(drop=True)
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
 
-    # Identify columns that contain 'detected_words' and convert lists to strings
-    detected_words_columns = [col for col in enhanced_dataset.columns if 'detected_words' in col]
+    # Identify all columns that contain list-like data
+    list_columns = enhanced_dataset.columns[enhanced_dataset.applymap(lambda x: isinstance(x, list)).any()]
 
-    for col in detected_words_columns:
+    for col in list_columns:
         enhanced_dataset[col] = enhanced_dataset[col].apply(
             lambda x: ', '.join(x) if isinstance(x, list) and x else ''
         )
@@ -326,12 +326,12 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
     Generate and display a horizontal Plotly bar plot from detected words.
     
     Parameters:
-        detected_words_series: pandas Series containing lists of detected words.
+        detected_words_series: pandas Series containing comma-separated detected words.
         label: Label/category name for the wordlist.
         top_n: Number of top words to display.
     """
-    # Flatten the list of detected words
-    all_detected_words = [word.strip() for sublist in detected_words_series for word in sublist.split(',') if word.strip()]
+    # Split the comma-separated strings back into lists
+    all_detected_words = [word.strip() for sublist in detected_words_series.dropna() for word in sublist.split(',') if word.strip()]
     if not all_detected_words:
         st.warning(f"No words detected for category '{label}' to generate a bar plot.")
         return
@@ -341,6 +341,9 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
     
     # Get the top N words
     top_words = word_counts.most_common(top_n)
+    if not top_words:
+        st.warning(f"No words detected for category '{label}' to generate a bar plot.")
+        return
     words, counts = zip(*top_words)
     
     # Create a DataFrame for plotting
@@ -357,7 +360,7 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
         orientation='h',
         title=f"📊 Top {top_n} Words/Phrases in '{label}' Category",
         labels={'Frequency': 'Frequency', 'Word': 'Word/Phrase'},
-        height=400  # Reduced height for smaller plots
+        height=400  # Adjust height as needed
     )
     
     fig.update_layout(yaxis={'categoryorder':'total ascending'})
@@ -540,7 +543,7 @@ def main():
         | absolutely                          | X                   |                        | X            |                       | X                        |                        |                         |                          |                     |                   |                               |                     | X               |             |                     |                       |                    |                      |                          |             |                   |                   |                     |
         | completely                          | X                   |                        | X            |                       |                          |                        |                         |                          | X                   |                   |                               |                     | X               |             |                     |                       |                    |                      |                          |             |                   |                   |                     |
         | ...                                 | ...                 | ...                    | ...          | ...                   | ...                      | ...                    | ...                     | ...                      | ...                 | ...               | ...                           | ...                 | ...             | ...         | ...                 | ...                   | ...                | ...                  | ...                      | ...         | ...               | ...               | ...                 |
-    
+
     ### 🛠️ Getting Started
 
     1. **Upload Files:**
@@ -562,7 +565,7 @@ def main():
     - Ensure that your wordlist is properly formatted to achieve accurate analysis results.
     - The tool is intended for educational and research purposes. It may not cover all edge cases or complex textual nuances.
     """)
-    
+
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
@@ -626,6 +629,10 @@ def main():
                 # If analysis is done, display results and allow statistical analyses
                 if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
                     enhanced_dataset = st.session_state.enhanced_dataset
+                    # Display data types of enhanced_dataset for debugging
+                    st.subheader("📑 Enhanced Dataset Data Types")
+                    st.write(enhanced_dataset.dtypes)
+                    
                     # Display enhanced dataset preview
                     st.subheader("📈 Enhanced Dataset Preview")
                     st.dataframe(enhanced_dataset.head())
