@@ -38,7 +38,7 @@ def load_dataset(uploaded_file):
         return None
 
 @st.cache_data
-def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
+def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], Dict[str, set], Dict[str, List[str]]]:
     """
     Load and preprocess a multi-category wordlist from a CSV, TXT, DIC, DICX, or XLSX file.
     
@@ -47,8 +47,10 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
         
     Returns:
         Tuple containing:
-            - Dictionary mapping categories to exact words
-            - Dictionary mapping categories to wildcard prefixes
+            - Dictionary mapping categories to exact single words
+            - Dictionary mapping categories to wildcard prefixes for single words
+            - Dictionary mapping categories to exact multi-word expressions
+            - Dictionary mapping categories to wildcard prefixes for multi-word expressions
     """
     try:
         file_extension = uploaded_file.name.split('.')[-1].lower()
@@ -64,94 +66,136 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]]]:
             wordlist_df = pd.read_excel(uploaded_file)
         else:
             st.error("Unsupported file format for wordlist. Please upload a CSV, TXT, DIC, DICX, or Excel file.")
-            return None, None
+            return None, None, None, None
         
         if 'DicTerm' not in wordlist_df.columns:
             st.error("The wordlist file must contain a column named 'DicTerm'.")
-            return None, None
+            return None, None, None, None
         
         # Identify category columns (excluding 'DicTerm')
         category_columns = [col for col in wordlist_df.columns if col != 'DicTerm']
         if not category_columns:
             st.error("No category columns found in the wordlist file.")
-            return None, None
+            return None, None, None, None
         
         # Initialize dictionaries
-        exact_words = {category: set() for category in category_columns}
-        wildcard_prefixes = {category: [] for category in category_columns}
+        exact_single_words = {category: set() for category in category_columns}
+        wildcard_single_prefixes = {category: [] for category in category_columns}
+        exact_multi_words = {category: set() for category in category_columns}
+        wildcard_multi_prefixes = {category: [] for category in category_columns}
         
         # Iterate over each row and assign words to categories
         for _, row in wordlist_df.iterrows():
-            word = str(row['DicTerm']).strip().lower()
+            term = str(row['DicTerm']).strip().lower()
+            is_multi_word = len(term.split()) > 1  # Determine if the term is multi-word
             for category in category_columns:
                 cell_value = row[category]
                 if pd.notna(cell_value) and str(cell_value).strip().upper() == 'X':
-                    if word.endswith('*'):
-                        prefix = word[:-1]
+                    if term.endswith('*'):
+                        prefix = term[:-1].strip()
                         if prefix:  # Avoid empty prefix
-                            wildcard_prefixes[category].append(prefix)
+                            if is_multi_word:
+                                wildcard_multi_prefixes[category].append(prefix)
+                            else:
+                                wildcard_single_prefixes[category].append(prefix)
                     else:
-                        exact_words[category].add(word)
+                        if is_multi_word:
+                            exact_multi_words[category].add(term)
+                        else:
+                            exact_single_words[category].add(term)
         
-        return exact_words, wildcard_prefixes
+        return exact_single_words, wildcard_single_prefixes, exact_multi_words, wildcard_multi_prefixes
     except Exception as e:
         st.error(f"Error loading wordlist: {e}")
-        return None, None
+        return None, None, None, None
 
-def clean_and_tokenize(document: str) -> List[str]:
+def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
     """
-    Clean and tokenize a document.
+    Clean and tokenize a document, generating both unigrams and n-grams up to max_n.
     
     Parameters:
         document: The text document as a string.
+        max_n: Maximum number of words in n-grams to generate.
         
     Returns:
-        List of tokens.
+        Tuple containing:
+            - List of unigrams (tokens).
+            - List of n-grams (from bigrams up to max_n).
     """
     # Replace non-word characters with space and lowercase
     clean_doc = re.sub(r"[^\w\s']", ' ', document.lower())
     tokens = clean_doc.split()
-    return tokens
+    
+    # Generate n-grams
+    ngrams = []
+    for n in range(2, max_n + 1):
+        n_grams = zip(*[tokens[i:] for i in range(n)])
+        ngrams += [' '.join(gram) for gram in n_grams]
+    
+    return tokens, ngrams
 
-def count_words(tokens: List[str], exact_words: set, wildcard_prefixes: List[str]) -> Tuple[int, List[str]]:
+def count_words(tokens: List[str], ngrams: List[str],
+               exact_single_words: set, wildcard_single_prefixes: List[str],
+               exact_multi_words: set, wildcard_multi_prefixes: List[str]) -> Tuple[int, List[str]]:
     """
-    Count words in tokens based on exact matches and wildcard prefixes.
+    Count words and n-grams in tokens and ngrams based on exact matches and wildcard prefixes.
     
     Parameters:
         tokens: List of tokens from the document.
-        exact_words: Set of exact words to match.
-        wildcard_prefixes: List of prefixes for wildcard matching.
+        ngrams: List of n-grams from the document.
+        exact_single_words: Set of exact single-word matches.
+        wildcard_single_prefixes: List of wildcard prefixes for single words.
+        exact_multi_words: Set of exact multi-word matches.
+        wildcard_multi_prefixes: List of wildcard prefixes for multi-word expressions.
         
     Returns:
         Tuple containing:
-            - Count of wordlist identified
-            - List of detected words
+            - Total count of wordlist identified.
+            - List of detected words and n-grams.
     """
     detected_words = set()
     count = 0
     
-    # Exact word matches
-    exact_matches = exact_words.intersection(tokens)
+    # Exact single word matches
+    exact_matches = exact_single_words.intersection(tokens)
     detected_words.update(exact_matches)
     count += len(exact_matches)
     
-    # Wildcard prefix matches
-    for prefix in wildcard_prefixes:
+    # Wildcard single word matches
+    for prefix in wildcard_single_prefixes:
         matches = [token for token in tokens if token.startswith(prefix)]
+        detected_words.update(matches)
+        count += len(matches)
+    
+    # Exact multi-word matches
+    exact_multi_matches = exact_multi_words.intersection(ngrams)
+    detected_words.update(exact_multi_matches)
+    count += len(exact_multi_matches)
+    
+    # Wildcard multi-word matches
+    for prefix in wildcard_multi_prefixes:
+        matches = [ngram for ngram in ngrams if ngram.startswith(prefix)]
         detected_words.update(matches)
         count += len(matches)
     
     detected_words_list = list(detected_words)
     return count, detected_words_list
 
-def analyze_text(documents: pd.Series, exact_words: Dict[str, set], wildcard_prefixes: Dict[str, List[str]], progress_bar) -> pd.DataFrame:
+def analyze_text(documents: pd.Series,
+                exact_single_words: Dict[str, set],
+                wildcard_single_prefixes: Dict[str, List[str]],
+                exact_multi_words: Dict[str, set],
+                wildcard_multi_prefixes: Dict[str, List[str]],
+                progress_bar) -> pd.DataFrame:
     """
-    Analyze text in documents using multiple wordlists.
+    Analyze text in documents using multiple wordlists, supporting both unigrams and n-grams.
     
     Parameters:
         documents: pandas Series containing text data.
-        exact_words: Dictionary mapping categories to exact words.
-        wildcard_prefixes: Dictionary mapping categories to wildcard prefixes.
+        exact_single_words: Dictionary mapping categories to exact single words.
+        wildcard_single_prefixes: Dictionary mapping categories to wildcard prefixes for single words.
+        exact_multi_words: Dictionary mapping categories to exact multi-word expressions.
+        wildcard_multi_prefixes: Dictionary mapping categories to wildcard prefixes for multi-word expressions.
         progress_bar: Streamlit progress bar object.
         
     Returns:
@@ -166,14 +210,14 @@ def analyze_text(documents: pd.Series, exact_words: Dict[str, set], wildcard_pre
         'word_count': [],
         'word_perc': [],
         'detected_words': []
-    } for category in exact_words.keys()}
+    } for category in exact_single_words.keys()}
     
     total_docs = len(documents)
     
     for i, doc in enumerate(documents):
         if pd.isna(doc):
             doc = ""
-        tokens = clean_and_tokenize(doc)
+        tokens, ngrams = clean_and_tokenize(doc)
         n_tokens = len(tokens)
         n_types = len(set(tokens))
         
@@ -181,10 +225,15 @@ def analyze_text(documents: pd.Series, exact_words: Dict[str, set], wildcard_pre
         n_tokens_list.append(n_tokens)
         n_types_list.append(n_types)
         
-        for category in exact_words.keys():
-            ew = exact_words[category]
-            wp = wildcard_prefixes[category]
-            count, detected = count_words(tokens, ew, wp)
+        for category in exact_single_words.keys():
+            count, detected = count_words(
+                tokens,
+                ngrams,
+                exact_single_words[category],
+                wildcard_single_prefixes[category],
+                exact_multi_words[category],
+                wildcard_multi_prefixes[category]
+            )
             word_perc = count / n_tokens if n_tokens > 0 else 0.0
             analysis_results[category]['word_count'].append(count)
             analysis_results[category]['word_perc'].append(word_perc)
@@ -229,31 +278,36 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
     return enhanced_dataset
 
-def generate_summary_list(exact_words: Dict[str, set]) -> str:
+def generate_summary_list(exact_single_words: Dict[str, set],
+                          exact_multi_words: Dict[str, set]) -> str:
     """
-    Generate a simple list summary of the wordlist categories, showing top three and bottom three words.
+    Generate a simple list summary of the wordlist categories, showing top three and bottom three words/phrases.
     
     Parameters:
-        exact_words: Dictionary mapping categories to exact words.
+        exact_single_words: Dictionary mapping categories to exact single words.
+        exact_multi_words: Dictionary mapping categories to exact multi-word expressions.
         
     Returns:
         A formatted string representing the wordlist summary.
     """
     summary_lines = []
-    for category, words in exact_words.items():
-        word_count = len(words)
-        if word_count == 0:
+    for category in exact_single_words.keys():
+        single_words = exact_single_words[category]
+        multi_words = exact_multi_words[category]
+        total_words = len(single_words) + len(multi_words)
+        
+        if total_words == 0:
             words_str = "None"
         else:
-            # Sort words alphabetically
-            sorted_words = sorted(words)
-            if word_count <= 6:
-                words_str = ', '.join(sorted_words)
+            # Combine single and multi-word terms
+            combined_words = sorted(single_words) + sorted(multi_words)
+            if total_words <= 6:
+                words_str = ', '.join(combined_words)
             else:
-                top_three = sorted_words[:3]
-                bottom_three = sorted_words[-3:]
+                top_three = combined_words[:3]
+                bottom_three = combined_words[-3:]
                 words_str = ', '.join(top_three) + ', ... , ' + ', '.join(bottom_three)
-        summary_line = f"**{category} ({word_count} words):** {words_str};"
+        summary_line = f"**{category} ({total_words} terms):** {words_str};"
         summary_lines.append(summary_line)
     summary_text = '\n\n'.join(summary_lines)  # Double newline for better spacing
     return summary_text
@@ -292,8 +346,8 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
         x='Frequency',
         y='Word',
         orientation='h',
-        title=f"📊 Top {top_n} Words in '{label}' Category",
-        labels={'Frequency': 'Frequency', 'Word': 'Word'},
+        title=f"📊 Top {top_n} Words/Phrases in '{label}' Category",
+        labels={'Frequency': 'Frequency', 'Word': 'Word/Phrase'},
         height=400  # Reduced height for smaller plots
     )
     
@@ -502,7 +556,7 @@ def main():
     - Ensure that your wordlist is properly formatted to achieve accurate analysis results.
     - The tool is intended for educational and research purposes. It may not cover all edge cases or complex textual nuances.
     """)
-
+    
     # Sidebar for file uploads
     st.sidebar.header("📥 Upload Files")
     uploaded_dataset = st.sidebar.file_uploader("Upload your dataset (CSV or Excel)", type=["csv", "xls", "xlsx"])
@@ -513,20 +567,22 @@ def main():
         dataset = load_dataset(uploaded_dataset)
         
         # Load wordlist
-        exact_words, wildcard_prefixes = load_wordlist(uploaded_wordlist)
+        exact_single_words, wildcard_single_prefixes, exact_multi_words, wildcard_multi_prefixes = load_wordlist(uploaded_wordlist)
         
-        if dataset is not None and exact_words is not None and wildcard_prefixes is not None:
+        if (dataset is not None and exact_single_words is not None and
+            wildcard_single_prefixes is not None and exact_multi_words is not None and
+            wildcard_multi_prefixes is not None):
             # Display dataset preview
             st.subheader("📄 Dataset Preview")
             st.dataframe(dataset.head())
             
-            # Display wordlist summary as a simple list with top 3 and bottom 3 words
+            # Display wordlist summary as a simple list with top 3 and bottom 3 words/phrases
             st.subheader("📃 Wordlist Summary")
-            summary_text = generate_summary_list(exact_words)
+            summary_text = generate_summary_list(exact_single_words, exact_multi_words)
             st.markdown(summary_text)
             
             # Select categories to analyze
-            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=list(exact_words.keys()), default=list(exact_words.keys()))
+            selected_categories = st.multiselect("📌 Select Categories to Analyze", options=list(exact_single_words.keys()), default=list(exact_single_words.keys()))
             
             if selected_categories:
                 # Select text column
@@ -542,9 +598,19 @@ def main():
                             documents = dataset[text_column].astype(str)
                             progress_bar = st.progress(0)
                             # Filter wordlists based on selected categories
-                            selected_exact_words = {cat: exact_words[cat] for cat in selected_categories}
-                            selected_wildcard_prefixes = {cat: wildcard_prefixes[cat] for cat in selected_categories}
-                            analysis_df = analyze_text(documents, selected_exact_words, selected_wildcard_prefixes, progress_bar)
+                            selected_exact_single = {cat: exact_single_words[cat] for cat in selected_categories}
+                            selected_wildcard_single = {cat: wildcard_single_prefixes[cat] for cat in selected_categories}
+                            selected_exact_multi = {cat: exact_multi_words[cat] for cat in selected_categories}
+                            selected_wildcard_multi = {cat: wildcard_multi_prefixes[cat] for cat in selected_categories}
+                            
+                            analysis_df = analyze_text(
+                                documents,
+                                selected_exact_single,
+                                selected_wildcard_single,
+                                selected_exact_multi,
+                                selected_wildcard_multi,
+                                progress_bar
+                            )
                             enhanced_dataset = enhance_dataset(dataset, analysis_df)
                             # Store enhanced_dataset in session_state
                             st.session_state.enhanced_dataset = enhanced_dataset
@@ -586,16 +652,17 @@ def main():
                                     st.markdown(f"**{category}**")
                                     # Allow user to select number of top words, default to 3
                                     top_n = st.number_input(
-                                        f"Select number of top words to display for '{category}':", 
+                                        f"Select number of top words/phrases to display for '{category}':", 
                                         min_value=1, 
                                         max_value=50, 
                                         value=3,  # Default value set to 3
                                         step=1, 
                                         key=f"top_n_{category}"
                                     )
-                                    column_name = f"{category}_detected_words"
-                                    if column_name in enhanced_dataset.columns:
-                                        generate_barplot(enhanced_dataset[column_name], category, top_n=int(top_n))
+                                    column_name_wc = f"{category}_word_count"
+                                    column_name_dw = f"{category}_detected_words"
+                                    if column_name_dw in enhanced_dataset.columns:
+                                        generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
                                     else:
                                         st.warning(f"No detected words data available for category '{category}'.")
                     
