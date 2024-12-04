@@ -305,6 +305,12 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     # **Sanitize Column Names: Replace spaces and special characters with underscores**
     enhanced_dataset.columns = enhanced_dataset.columns.str.replace(' ', '_').str.replace('[^A-Za-z0-9_]', '', regex=True)
 
+    # **Check and Add 'n_tokens' and 'n_types' Only If They Don't Exist**
+    if 'n_tokens' not in enhanced_dataset.columns:
+        enhanced_dataset['n_tokens'] = analysis_df['n_tokens']
+    if 'n_types' not in enhanced_dataset.columns:
+        enhanced_dataset['n_types'] = analysis_df['n_types']
+
     return enhanced_dataset
 
 def generate_summary_list(exact_single_words: Dict[str, set],
@@ -465,52 +471,56 @@ def perform_anova(enhanced_df: pd.DataFrame):
         # Ensure categorical variable is treated as category
         df_clean[cat_var] = df_clean[cat_var].astype('category')
         
-        # Perform one-way ANOVA using statsmodels
-        model = ols(f'{num_var} ~ C({cat_var})', data=df_clean).fit()
-        anova_table = sm.stats.anova_lm(model, typ=2)
-        
-        st.write("**ANOVA Table:**")
-        st.table(anova_table)
-        
-        # Check if the ANOVA is significant
-        if anova_table['PR(>F)'][0] < 0.05:
-            st.success("The ANOVA test is significant (p < 0.05). There are significant differences between group means.")
-        else:
-            st.info("The ANOVA test is not significant (p ≥ 0.05). There are no significant differences between group means.")
-        
-        # Perform Tukey's HSD Post Hoc Test
-        tukey = pairwise_tukeyhsd(endog=df_clean[num_var], groups=df_clean[cat_var], alpha=0.05)
-        tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
-        
-        st.write("**Tukey's HSD Post Hoc Comparisons:**")
-        st.table(tukey_df)
-        
-        # Generate Plotly bar plot with 95% Confidence Intervals
-        group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'sem']).reset_index()
-        group_stats.rename(columns={'sem': 'standard_error'}, inplace=True)
-        group_stats['ci_lower'] = group_stats['mean'] - 1.96 * group_stats['standard_error']
-        group_stats['ci_upper'] = group_stats['mean'] + 1.96 * group_stats['standard_error']
-        
-        fig = px.bar(
-            group_stats, 
-            x='mean', 
-            y=cat_var, 
-            orientation='h',
-            title=f'Bar Plot of {num_var} by {cat_var} with 95% Confidence Intervals',
-            labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
-            height=600  # Adjusted height for better visibility
-        )
-        fig.update_layout(yaxis={'categoryorder':'total ascending'})
-        
-        # Add confidence interval lines manually
-        for i, row in group_stats.iterrows():
-            fig.add_shape(
-                type="line",
-                x0=row['ci_lower'], y0=i, x1=row['ci_upper'], y1=i,
-                line=dict(color="black", width=2)
+        try:
+            # Perform one-way ANOVA using statsmodels
+            model = ols(f'{num_var} ~ C({cat_var})', data=df_clean).fit()
+            anova_table = sm.stats.anova_lm(model, typ=2)
+            
+            st.write("**ANOVA Table:**")
+            st.table(anova_table)
+            
+            # Check if the ANOVA is significant
+            if anova_table['PR(>F)'][0] < 0.05:
+                st.success("The ANOVA test is significant (p < 0.05). There are significant differences between group means.")
+            else:
+                st.info("The ANOVA test is not significant (p ≥ 0.05). There are no significant differences between group means.")
+            
+            # Perform Tukey's HSD Post Hoc Test
+            tukey = pairwise_tukeyhsd(endog=df_clean[num_var], groups=df_clean[cat_var], alpha=0.05)
+            tukey_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
+            
+            st.write("**Tukey's HSD Post Hoc Comparisons:**")
+            st.table(tukey_df)
+            
+            # Generate Plotly bar plot with 95% Confidence Intervals
+            group_stats = df_clean.groupby(cat_var)[num_var].agg(['mean', 'sem']).reset_index()
+            group_stats.rename(columns={'sem': 'standard_error'}, inplace=True)
+            group_stats['ci_lower'] = group_stats['mean'] - 1.96 * group_stats['standard_error']
+            group_stats['ci_upper'] = group_stats['mean'] + 1.96 * group_stats['standard_error']
+            
+            fig = px.bar(
+                group_stats, 
+                x='mean', 
+                y=cat_var, 
+                orientation='h',
+                title=f'Bar Plot of {num_var} by {cat_var} with 95% Confidence Intervals',
+                labels={'mean': f'Mean of {num_var}', cat_var: cat_var},
+                height=600  # Adjusted height for better visibility
             )
+            fig.update_layout(yaxis={'categoryorder':'total ascending'})
+            
+            # Add confidence interval lines manually
+            for i, row in group_stats.iterrows():
+                fig.add_shape(
+                    type="line",
+                    x0=row['ci_lower'], y0=i, x1=row['ci_upper'], y1=i,
+                    line=dict(color="black", width=2)
+                )
+            
+            st.plotly_chart(fig, use_container_width=True)
         
-        st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error performing ANOVA: {e}")
 
 # =========================
 #        STREAMLIT APP
@@ -558,11 +568,14 @@ def main():
         - **Wildcard Prefixes:** To indicate prefix matching, end a word with an asterisk (`*`). For example, `run*` will match `running`, `runner`, etc.
     - **Sample Format:**
     
-        | DicTerm                             | Superlative Adverbs | Superlative Adjectives | Intensifiers | Relative Superlatives | Words Denoting Certainty | Words Denoting Urgency | Exaggerated Comparisons | Maximizers and Minimizers | Double Intensifiers | Negative Prefixes | Idioms and Figurative Language | Hyperbolic Language | Absolute Terms | Diminishers | Comparative Adverbs | Comparative Adjectives | Modal Intensifiers | Emphatic Expressions | Repetition for Emphasis | Quantifiers | Temporal Extremes | Spatial Extremes | Causative Extremes |
-        |-------------------------------------|---------------------|------------------------|--------------|-----------------------|--------------------------|------------------------|-------------------------|--------------------------|---------------------|-------------------|-------------------------------|---------------------|-----------------|-------------|---------------------|-----------------------|--------------------|----------------------|--------------------------|-------------|-------------------|-------------------|---------------------|
-        | absolutely                          | X                   |                        | X            |                       | X                        |                        |                         |                          |                     |                   |                               |                     | X               |             |                     |                       |                    |                      |                          |             |                   |                   |                     |
-        | completely                          | X                   |                        | X            |                       |                          |                        |                         |                          | X                   |                   |                               |                     | X               |             |                     |                       |                    |                      |                          |             |                   |                   |                     |
-        | ...                                 | ...                 | ...                    | ...          | ...                   | ...                      | ...                    | ...                     | ...                      | ...                 | ...               | ...                           | ...                 | ...             | ...         | ...                 | ...                   | ...                | ...                  | ...                      | ...         | ...               | ...               | ...                 |
+        | DicTerm        | Intensifiers | Negations | Modal_Expressions |
+        |----------------|--------------|-----------|--------------------|
+        | very           | X            |           |                    |
+        | extremely      | X            |           |                    |
+        | not            |              | X         |                    |
+        | never          |              | X         |                    |
+        | can*           |              |           | X                  |
+        | might*         |              |           | X                  |
 
     ### 🛠️ Getting Started
 
@@ -645,103 +658,101 @@ def main():
                             st.session_state.enhanced_dataset = enhanced_dataset
                             st.session_state.analysis_done = True
                             st.success("✅ Textual Analysis Completed!")
-                
-                # If analysis is done, display results and allow statistical analyses
-                if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
-                    enhanced_dataset = st.session_state.enhanced_dataset
-                    # Display data types of enhanced_dataset for debugging
-                    st.subheader("📑 Enhanced Dataset Data Types")
-                    st.write(enhanced_dataset.dtypes)
-                    
-                    # **Debugging: Check for problematic columns**
-                    st.subheader("🔍 Column Data Types Check")
-                    for col in enhanced_dataset.columns:
-                        if enhanced_dataset[col].dtype == 'object':
-                            unique_types = enhanced_dataset[col].apply(type).unique()
-                            if len(unique_types) > 1:
-                                st.write(f"**Column '{col}'** has multiple data types: {unique_types}")
-                            else:
-                                st.write(f"**Column '{col}'** has data type: {unique_types[0]}")
-                    
-                    # Display enhanced dataset preview
-                    st.subheader("📈 Enhanced Dataset Preview")
-                    try:
-                        st.dataframe(enhanced_dataset.head())
-                    except Exception as e:
-                        st.error(f"Error displaying DataFrame: {e}")
-                    
-                    # Download enhanced dataset
-                    csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Enhanced Dataset (CSV)",
-                        data=csv,
-                        file_name="enhanced_dataset.csv",
-                        mime="text/csv",
-                    )
-                    
-                    # Generate and display bar plots for selected categories based on user selection
-                    st.subheader("📊 Word Frequency Analysis")
-                    
-                    # User selects which categories to display bar plots for
-                    plot_categories = st.multiselect(
-                        "🔎 Select Categories to Display Bar Plots:",
-                        options=selected_categories,
-                        default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
-                    )
-                    
-                    if plot_categories:
-                        # Create chunks of three categories each for layout
-                        for i in range(0, len(plot_categories), 3):
-                            cols = st.columns(3)
-                            for j, category in enumerate(plot_categories[i:i+3]):
-                                with cols[j]:
-                                    st.markdown(f"**{category}**")
-                                    # Allow user to select number of top words, default to 3
-                                    top_n = st.number_input(
-                                        f"Select number of top words/phrases to display for '{category}':", 
-                                        min_value=1, 
-                                        max_value=50, 
-                                        value=3,  # Default value set to 3
-                                        step=1, 
-                                        key=f"top_n_{category}"
-                                    )
-                                    column_name_wc = f"{category}_word_count"
-                                    column_name_dw = f"{category}_detected_words"
-                                    if column_name_dw in enhanced_dataset.columns:
-                                        generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
-                                    else:
-                                        st.warning(f"No detected words data available for category '{category}'.")
-                    
+        
+        # If analysis is done, display results and allow statistical analyses
+        if 'analysis_done' in st.session_state and st.session_state.analysis_done and 'enhanced_dataset' in st.session_state and st.session_state.enhanced_dataset is not None:
+            enhanced_dataset = st.session_state.enhanced_dataset
+            # Display data types of enhanced_dataset for debugging
+            st.subheader("📑 Enhanced Dataset Data Types")
+            st.write(enhanced_dataset.dtypes)
+            
+            # **Debugging: Check for problematic columns**
+            st.subheader("🔍 Column Data Types Check")
+            for col in enhanced_dataset.columns:
+                if enhanced_dataset[col].dtype == 'object':
+                    unique_types = enhanced_dataset[col].apply(type).unique()
+                    if len(unique_types) > 1:
+                        st.write(f"**Column '{col}'** has multiple data types: {unique_types}")
                     else:
-                        st.info("🔎 Please select at least one category to display bar plots.")
-                    
-                    # Divider before statistical analyses
-                    st.markdown("---")
-                    
-                    # Statistical Analyses Section
-                    st.subheader("📊 Statistical Analyses")
-                    
-                    # Create tabs for correlation and ANOVA
-                    analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
-                    
-                    with analysis_tab:
-                        perform_pearson_correlation(enhanced_dataset)
-                    
-                    with anova_tab:
-                        perform_anova(enhanced_dataset)
+                        st.write(f"**Column '{col}'** has data type: {unique_types[0]}")
+            
+            # Display enhanced dataset preview
+            st.subheader("📈 Enhanced Dataset Preview")
+            try:
+                st.dataframe(enhanced_dataset.head())
+            except Exception as e:
+                st.error(f"Error displaying DataFrame: {e}")
+            
+            # Download enhanced dataset
+            csv = enhanced_dataset.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Enhanced Dataset (CSV)",
+                data=csv,
+                file_name="enhanced_dataset.csv",
+                mime="text/csv",
+            )
+            
+            # Generate and display bar plots for selected categories based on user selection
+            st.subheader("📊 Word Frequency Analysis")
+            
+            # User selects which categories to display bar plots for
+            plot_categories = st.multiselect(
+                "🔎 Select Categories to Display Bar Plots:",
+                options=selected_categories,
+                default=selected_categories[:3] if len(selected_categories) >=3 else selected_categories
+            )
+            
+            if plot_categories:
+                # Create chunks of three categories each for layout
+                for i in range(0, len(plot_categories), 3):
+                    cols = st.columns(3)
+                    for j, category in enumerate(plot_categories[i:i+3]):
+                        with cols[j]:
+                            st.markdown(f"**{category}**")
+                            # Allow user to select number of top words, default to 3
+                            top_n = st.number_input(
+                                f"Select number of top words/phrases to display for '{category}':", 
+                                min_value=1, 
+                                max_value=50, 
+                                value=3,  # Default value set to 3
+                                step=1, 
+                                key=f"top_n_{category}"
+                            )
+                            column_name_wc = f"{category}_word_count"
+                            column_name_dw = f"{category}_detected_words"
+                            if column_name_dw in enhanced_dataset.columns:
+                                generate_barplot(enhanced_dataset[column_name_dw], category, top_n=int(top_n))
+                            else:
+                                st.warning(f"No detected words data available for category '{category}'.")
+            
             else:
-                st.info("📌 Please select at least one category to analyze.")
-    else:
-        st.info("📌 Please upload both the dataset and the wordlist to begin.")
+                st.info("🔎 Please select at least one category to display bar plots.")
+            
+            # Divider before statistical analyses
+            st.markdown("---")
+            
+            # Statistical Analyses Section
+            st.subheader("📊 Statistical Analyses")
+            
+            # Create tabs for correlation and ANOVA
+            analysis_tab, anova_tab = st.tabs(["🔗 Pearson Correlation", "📉 ANOVA"])
+            
+            with analysis_tab:
+                perform_pearson_correlation(enhanced_dataset)
+            
+            with anova_tab:
+                perform_anova(enhanced_dataset)
     
-    # Footer
-    st.markdown("""
-    ---
-    <span style="font-size:0.9em; color:gray;">
-    **Note:** This tool is intended for educational and research purposes only. It is a simplified version and does not offer the comprehensive 
-    features or performance of professional-grade software.
-    </span>
-    """, unsafe_allow_html=True)
+    # Footer Section (Added at the End)
+    def add_footer():
+        st.markdown("---")
+        st.markdown("### **Gabriele Di Cicco, PhD in Social Psychology**")
+        st.markdown("""
+        [GitHub](https://github.com/gdc0000) | 
+        [ORCID](https://orcid.org/0000-0002-1439-5790) | 
+        [LinkedIn](https://www.linkedin.com/in/gabriele-di-cicco-124067b0/)
+        """)
 
-if __name__ == "__main__":
-    main()
+    if __name__ == "__main__":
+        main()
+        add_footer()
