@@ -53,10 +53,10 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], 
         
     Returns:
         Tuple containing:
-            - Dictionary mapping categories to exact single words
-            - Dictionary mapping categories to wildcard prefixes for single words
-            - Dictionary mapping categories to exact multi-word expressions
-            - Dictionary mapping categories to wildcard prefixes for multi-word expressions
+            - Dictionary mapping sanitized categories to exact single words
+            - Dictionary mapping sanitized categories to wildcard prefixes for single words
+            - Dictionary mapping sanitized categories to exact multi-word expressions
+            - Dictionary mapping sanitized categories to wildcard prefixes for multi-word expressions
     """
     try:
         file_extension = uploaded_file.name.split('.')[-1].lower()
@@ -78,23 +78,27 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], 
             st.error("The wordlist file must contain a column named 'DicTerm'.")
             return None, None, None, None
         
-        # Identify category columns (excluding 'DicTerm')
+        # Identify category columns (excluding 'DicTerm') and sanitize them
         category_columns = [col for col in wordlist_df.columns if col != 'DicTerm']
         if not category_columns:
             st.error("No category columns found in the wordlist file.")
             return None, None, None, None
         
-        # Initialize dictionaries
-        exact_single_words = {category: set() for category in category_columns}
-        wildcard_single_prefixes = {category: [] for category in category_columns}
-        exact_multi_words = {category: set() for category in category_columns}
-        wildcard_multi_prefixes = {category: [] for category in category_columns}
+        # Sanitize category names by replacing spaces with underscores
+        sanitized_category_columns = [col.replace(' ', '_') for col in category_columns]
+        wordlist_df.columns = ['DicTerm'] + sanitized_category_columns
+        
+        # Initialize dictionaries with sanitized category names
+        exact_single_words = {category: set() for category in sanitized_category_columns}
+        wildcard_single_prefixes = {category: [] for category in sanitized_category_columns}
+        exact_multi_words = {category: set() for category in sanitized_category_columns}
+        wildcard_multi_prefixes = {category: [] for category in sanitized_category_columns}
         
         # Iterate over each row and assign words to categories
         for _, row in wordlist_df.iterrows():
             term = str(row['DicTerm']).strip().lower()
             is_multi_word = len(term.split()) > 1  # Determine if the term is multi-word
-            for category in category_columns:
+            for category in sanitized_category_columns:
                 cell_value = row[category]
                 if pd.notna(cell_value) and str(cell_value).strip().upper() == 'X':
                     if term.endswith('*'):
@@ -114,27 +118,6 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], 
     except Exception as e:
         st.error(f"Error loading wordlist: {e}")
         return None, None, None, None
-
-def make_unique(columns):
-    """
-    Ensure all column names are unique by appending suffixes to duplicates.
-    
-    Parameters:
-        columns (Index): pandas Index object containing column names.
-        
-    Returns:
-        List[str]: List of unique column names.
-    """
-    seen = {}
-    unique_columns = []
-    for col in columns:
-        if col not in seen:
-            seen[col] = 1
-            unique_columns.append(col)
-        else:
-            seen[col] += 1
-            unique_columns.append(f"{col}_{seen[col]}")
-    return unique_columns
 
 def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
     """
@@ -219,10 +202,10 @@ def analyze_text(documents: pd.Series,
     
     Parameters:
         documents: pandas Series containing text data.
-        exact_single_words: Dictionary mapping categories to exact single words.
-        wildcard_single_prefixes: Dictionary mapping categories to wildcard prefixes for single words.
-        exact_multi_words: Dictionary mapping categories to exact multi-word expressions.
-        wildcard_multi_prefixes: Dictionary mapping categories to wildcard prefixes for multi-word expressions.
+        exact_single_words: Dictionary mapping sanitized categories to exact single words.
+        wildcard_single_prefixes: Dictionary mapping sanitized categories to wildcard prefixes for single words.
+        exact_multi_words: Dictionary mapping sanitized categories to exact multi-word expressions.
+        wildcard_multi_prefixes: Dictionary mapping sanitized categories to wildcard prefixes for multi-word expressions.
         progress_bar: Streamlit progress bar object.
         
     Returns:
@@ -332,9 +315,6 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     # Sanitize Column Names: Replace spaces and special characters with underscores
     enhanced_dataset.columns = enhanced_dataset.columns.str.replace(' ', '_').str.replace('[^A-Za-z0-9_]', '', regex=True)
     
-    # Ensure all column names are unique
-    enhanced_dataset.columns = make_unique(enhanced_dataset.columns)
-    
     # Check and Add 'n_tokens' and 'n_types' Only If They Don't Exist
     if 'n_tokens' not in enhanced_dataset.columns:
         enhanced_dataset['n_tokens'] = analysis_df['n_tokens']
@@ -349,8 +329,8 @@ def generate_summary_list(exact_single_words: Dict[str, set],
     Generate a simple list summary of the wordlist categories, showing top three and bottom three words/phrases.
     
     Parameters:
-        exact_single_words: Dictionary mapping categories to exact single words.
-        exact_multi_words: Dictionary mapping categories to exact multi-word expressions.
+        exact_single_words: Dictionary mapping sanitized categories to exact single words.
+        exact_multi_words: Dictionary mapping sanitized categories to exact multi-word expressions.
         
     Returns:
         A formatted string representing the wordlist summary.
