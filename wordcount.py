@@ -557,13 +557,13 @@ def main():
         st.session_state.enhanced_dataset = None
 
     # Title of the app
-    st.title("📊 TextInsight Analyzer")
+    st.title("📊 WordCount Statistics")
     
     # Visual Introduction
     st.markdown("""
-    ## 👋 Welcome to TextInsight Analyzer!
+    ## 👋 Welcome to WordCount Statistics!
 
-    **TextInsight Analyzer** is a tool designed to help you analyze textual data by leveraging customizable wordlists. Here's how to get started:
+    **WordCount Statistics** is a tool designed to help you analyze textual data by leveraging customizable wordlists. Here's how to get started:
 
     ### 📁 Expected Files
 
