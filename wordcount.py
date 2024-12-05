@@ -14,7 +14,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 # =========================
 
 # **Set the page configuration as the first Streamlit command**
-st.set_page_config(page_title="TextInsight Analyzer", layout="wide")
+st.set_page_config(page_title="WordCount Statistics", layout="wide")
 
 # =========================
 #        FUNCTIONS
