@@ -23,7 +23,7 @@ st.set_page_config(page_title="WordCount Statistics", layout="wide")
 @st.cache_data
 def load_dataset(uploaded_file):
     """
-    Load a dataset from a CSV or Excel file.
+    Load a dataset from a CSV, TSV, or Excel file.
     
     Parameters:
         uploaded_file: Uploaded file object from Streamlit.
@@ -34,10 +34,12 @@ def load_dataset(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
             return pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith('.tsv'):
+            return pd.read_csv(uploaded_file, sep='\t')  # Use tab as delimiter for TSV
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
             return pd.read_excel(uploaded_file)
         else:
-            st.error("Unsupported file format for dataset. Please upload a CSV or Excel file.")
+            st.error("Unsupported file format for dataset. Please upload a CSV, TSV, or Excel file.")
             return None
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
