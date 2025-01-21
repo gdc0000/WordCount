@@ -8,6 +8,8 @@ from scipy.stats import pearsonr
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from joblib import Parallel, delayed
+import multiprocessing
 
 # =========================
 #        PAGE CONFIG
@@ -121,6 +123,9 @@ def load_wordlist(uploaded_file) -> Tuple[Dict[str, set], Dict[str, List[str]], 
         st.error(f"Error loading wordlist: {e}")
         return None, None, None, None
 
+# Pre-compile regex pattern for cleaning text
+CLEAN_REGEX = re.compile(r"[^\w\s']")
+
 def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
     """
     Clean and tokenize a document, generating both unigrams and n-grams up to max_n.
@@ -134,15 +139,13 @@ def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[s
             - List of unigrams (tokens).
             - List of n-grams (from bigrams up to max_n).
     """
-    # Replace non-word characters with space and lowercase
-    clean_doc = re.sub(r"[^\w\s']", ' ', document.lower())
+    # Use pre-compiled regex
+    clean_doc = CLEAN_REGEX.sub(' ', document.lower())
     tokens = clean_doc.split()
     
-    # Generate n-grams
-    ngrams = []
-    for n in range(2, max_n + 1):
-        n_grams = zip(*[tokens[i:] for i in range(n)])
-        ngrams += [' '.join(gram) for gram in n_grams]
+    # Generate n-grams using list comprehension for speed
+    ngrams = [' '.join(gram) for n in range(2, max_n + 1)
+              for gram in zip(*[tokens[i:] for i in range(n)])]
     
     return tokens, ngrams
 
@@ -175,6 +178,7 @@ def count_words(tokens: List[str], ngrams: List[str],
     
     # Wildcard single word matches
     for prefix in wildcard_single_prefixes:
+        # Using list comprehension for speed
         matches = [token for token in tokens if token.startswith(prefix)]
         detected_words.update(matches)
         count += len(matches)
@@ -193,76 +197,82 @@ def count_words(tokens: List[str], ngrams: List[str],
     detected_words_list = list(detected_words)
     return count, detected_words_list
 
-def analyze_text(documents: pd.Series,
-                exact_single_words: Dict[str, set],
-                wildcard_single_prefixes: Dict[str, List[str]],
-                exact_multi_words: Dict[str, set],
-                wildcard_multi_prefixes: Dict[str, List[str]],
-                progress_bar) -> pd.DataFrame:
+def analyze_document(doc: str,
+                     exact_single_words: Dict[str, set],
+                     wildcard_single_prefixes: Dict[str, List[str]],
+                     exact_multi_words: Dict[str, set],
+                     wildcard_multi_prefixes: Dict[str, List[str]]) -> Dict[str, any]:
     """
-    Analyze text in documents using multiple wordlists, supporting both unigrams and n-grams.
+    Analyze a single document and return word counts, detected words, n_tokens, and n_types for each category.
+    """
+    tokens, ngrams = clean_and_tokenize(doc)
+    n_tokens = len(tokens)
+    n_types = len(set(tokens))
+    result = {
+        'n_tokens': n_tokens,
+        'n_types': n_types
+    }
     
-    Parameters:
-        documents: pandas Series containing text data.
-        exact_single_words: Dictionary mapping sanitized categories to exact single words.
-        wildcard_single_prefixes: Dictionary mapping sanitized categories to wildcard prefixes for single words.
-        exact_multi_words: Dictionary mapping sanitized categories to exact multi-word expressions.
-        wildcard_multi_prefixes: Dictionary mapping sanitized categories to wildcard prefixes for multi-word expressions.
-        progress_bar: Streamlit progress bar object.
-        
-    Returns:
-        pandas.DataFrame with analysis results for each category and global metrics.
+    for category in exact_single_words.keys():
+        count, detected = count_words(
+            tokens,
+            ngrams,
+            exact_single_words[category],
+            wildcard_single_prefixes[category],
+            exact_multi_words[category],
+            wildcard_multi_prefixes[category]
+        )
+        word_perc = count / n_tokens if n_tokens > 0 else 0.0
+        result[category] = {
+            'word_count': count,
+            'word_perc': word_perc,
+            'detected_words': ', '.join(detected)
+        }
+    
+    return result
+
+@st.cache_data
+def analyze_text_parallel(documents: pd.Series,
+                          exact_single_words: Dict[str, set],
+                          wildcard_single_prefixes: Dict[str, List[str]],
+                          exact_multi_words: Dict[str, set],
+                          wildcard_multi_prefixes: Dict[str, List[str]]):
     """
+    Analyze text in documents using parallel processing for speed.
+    """
+    num_cores = multiprocessing.cpu_count()
+    results = Parallel(n_jobs=num_cores)(
+        delayed(analyze_document)(
+            doc,
+            exact_single_words,
+            wildcard_single_prefixes,
+            exact_multi_words,
+            wildcard_multi_prefixes
+        ) for doc in documents
+    )
+    
     # Initialize lists for global metrics
     n_tokens_list = []
     n_types_list = []
     
-    # Initialize a dictionary to hold results for each category
-    analysis_results = {category: {
-        'word_count': [],
-        'word_perc': [],
-        'detected_words': []
-    } for category in exact_single_words.keys()}
+    # Initialize dictionaries for category metrics
+    analysis_results = {category: {'word_count': [], 'word_perc': [], 'detected_words': []}
+                        for category in exact_single_words.keys()}
     
-    total_docs = len(documents)
-    
-    for i, doc in enumerate(documents):
-        if pd.isna(doc):
-            doc = ""
-        tokens, ngrams = clean_and_tokenize(doc)
-        n_tokens = len(tokens)
-        n_types = len(set(tokens))
-        
-        # Append global metrics
-        n_tokens_list.append(n_tokens)
-        n_types_list.append(n_types)
-        
+    for result in results:
+        n_tokens_list.append(result['n_tokens'])
+        n_types_list.append(result['n_types'])
         for category in exact_single_words.keys():
-            count, detected = count_words(
-                tokens,
-                ngrams,
-                exact_single_words[category],
-                wildcard_single_prefixes[category],
-                exact_multi_words[category],
-                wildcard_multi_prefixes[category]
-            )
-            word_perc = count / n_tokens if n_tokens > 0 else 0.0
-            analysis_results[category]['word_count'].append(count)
-            analysis_results[category]['word_perc'].append(word_perc)
-            analysis_results[category]['detected_words'].append(detected)
-        
-        # Update progress every 100 documents or at the end
-        if (i + 1) % 100 == 0 or i == total_docs -1:
-            progress = (i + 1) / total_docs
-            progress_bar.progress(progress)
+            analysis_results[category]['word_count'].append(result[category]['word_count'])
+            analysis_results[category]['word_perc'].append(result[category]['word_perc'])
+            analysis_results[category]['detected_words'].append(result[category]['detected_words'])
     
-    # Create a DataFrame for global metrics
+    # Create DataFrames for global metrics and category metrics
     global_metrics = pd.DataFrame({
         'n_tokens': n_tokens_list,
         'n_types': n_types_list
     })
     
-    # Create DataFrames for each category
     category_metrics = {}
     for category, metrics in analysis_results.items():
         category_metrics[f"{category}_word_count"] = metrics['word_count']
@@ -278,13 +288,6 @@ def analyze_text(documents: pd.Series,
 def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.DataFrame:
     """
     Enhance the original dataset with analysis results and sanitize column names.
-    
-    Parameters:
-        dataset: Original pandas DataFrame.
-        analysis_df: DataFrame containing analysis results.
-        
-    Returns:
-        Enhanced pandas DataFrame with sanitized column names.
     """
     dataset = dataset.reset_index(drop=True)
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
@@ -374,7 +377,7 @@ def generate_barplot(detected_words_series: pd.Series, label: str, top_n: int = 
         st.warning(f"No words detected for category '{label}' to generate a bar plot.")
         return
     
-    # Count word frequencies
+    # Count word frequencies using Counter
     word_counts = Counter(all_detected_words)
     
     # Get the top N words
@@ -560,7 +563,7 @@ def main():
 
     # Title of the app
     st.title("📊 WordCount Statistics")
-    
+
     # Visual Introduction
     st.markdown("""
     ## 👋 Welcome to WordCount Statistics!
@@ -662,21 +665,21 @@ def main():
                     if st.button("🚀 Start Analysis"):
                         with st.spinner("🔄 Performing Textual Analysis... This may take a while for large datasets."):
                             documents = dataset[text_column].astype(str)
-                            progress_bar = st.progress(0)
                             # Filter wordlists based on selected categories
                             selected_exact_single = {cat: exact_single_words[cat] for cat in selected_categories}
                             selected_wildcard_single = {cat: wildcard_single_prefixes[cat] for cat in selected_categories}
                             selected_exact_multi = {cat: exact_multi_words[cat] for cat in selected_categories}
                             selected_wildcard_multi = {cat: wildcard_multi_prefixes[cat] for cat in selected_categories}
                             
-                            analysis_df = analyze_text(
+                            # Perform parallel analysis
+                            analysis_df = analyze_text_parallel(
                                 documents,
                                 selected_exact_single,
                                 selected_wildcard_single,
                                 selected_exact_multi,
-                                selected_wildcard_multi,
-                                progress_bar
+                                selected_wildcard_multi
                             )
+                            
                             enhanced_dataset = enhance_dataset(dataset, analysis_df)
                             # Store enhanced_dataset in session_state
                             st.session_state.enhanced_dataset = enhanced_dataset
