@@ -1,4 +1,3 @@
-```markdown
 # WordCount Statistics
 
 **WordCount Statistics** is a Streamlit-based tool designed to analyze textual data using customizable wordlists. It not only counts the occurrences of specified words and phrases (including wildcard prefixes) in your text data but also provides detailed statistical insights and visualizations, such as word frequency bar plots, Pearson correlation, and ANOVA analyses.
@@ -50,7 +49,7 @@ The application is especially useful for researchers and educators in the social
    ```bash
    git clone https://github.com/yourusername/wordcount-statistics.git
    cd wordcount-statistics
-   ```
+
 
 2. **Create a Virtual Environment (Optional but Recommended)**
 
