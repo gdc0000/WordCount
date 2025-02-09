@@ -700,7 +700,7 @@ def main():
         st.download_button(
             label="📥 Download Enhanced Dataset (CSV)",
             data=csv,
-            file_name="enhanced_dataset.csv",
+            file_name=uploaded_file.name+"enhanced_dataset.csv",
             mime="text/csv",
         )
         
