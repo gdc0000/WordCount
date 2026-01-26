@@ -1,0 +1,115 @@
+import re
+from typing import Dict, List, Tuple
+
+import pandas as pd
+
+
+def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
+    """
+    Clean and tokenize a document, generating unigrams and n-grams.
+    """
+    clean_doc = re.sub(r"[^\w\s']", " ", document.lower())
+    tokens = clean_doc.split()
+
+    ngrams = []
+    for n in range(2, max_n + 1):
+        n_grams = zip(*[tokens[i:] for i in range(n)])
+        ngrams += [" ".join(gram) for gram in n_grams]
+
+    return tokens, ngrams
+
+
+def count_words(
+    tokens: List[str],
+    ngrams: List[str],
+    exact_single_words: set,
+    wildcard_single_prefixes: List[str],
+    exact_multi_words: set,
+    wildcard_multi_prefixes: List[str],
+) -> Tuple[int, List[str]]:
+    """
+    Count words and n-grams based on exact matches and wildcard prefixes.
+    """
+    detected_words = set()
+    count = 0
+
+    exact_matches = exact_single_words.intersection(tokens)
+    detected_words.update(exact_matches)
+    count += len(exact_matches)
+
+    for prefix in wildcard_single_prefixes:
+        matches = [token for token in tokens if token.startswith(prefix)]
+        detected_words.update(matches)
+        count += len(matches)
+
+    exact_multi_matches = exact_multi_words.intersection(ngrams)
+    detected_words.update(exact_multi_matches)
+    count += len(exact_multi_matches)
+
+    for prefix in wildcard_multi_prefixes:
+        matches = [ngram for ngram in ngrams if ngram.startswith(prefix)]
+        detected_words.update(matches)
+        count += len(matches)
+
+    return count, list(detected_words)
+
+
+def analyze_text(
+    documents: pd.Series,
+    exact_single_words: Dict[str, set],
+    wildcard_single_prefixes: Dict[str, List[str]],
+    exact_multi_words: Dict[str, set],
+    wildcard_multi_prefixes: Dict[str, List[str]],
+    progress_bar,
+) -> pd.DataFrame:
+    """
+    Analyze text in documents using multiple wordlists.
+    """
+    n_tokens_list = []
+    n_types_list = []
+
+    analysis_results = {
+        category: {"word_count": [], "word_perc": [], "detected_words": []}
+        for category in exact_single_words.keys()
+    }
+
+    total_docs = len(documents)
+
+    for i, doc in enumerate(documents):
+        if pd.isna(doc):
+            doc = ""
+        tokens, ngrams = clean_and_tokenize(doc)
+        n_tokens = len(tokens)
+        n_types = len(set(tokens))
+
+        n_tokens_list.append(n_tokens)
+        n_types_list.append(n_types)
+
+        for category in exact_single_words.keys():
+            count, detected = count_words(
+                tokens,
+                ngrams,
+                exact_single_words[category],
+                wildcard_single_prefixes[category],
+                exact_multi_words[category],
+                wildcard_multi_prefixes[category],
+            )
+            word_perc = count / n_tokens if n_tokens > 0 else 0.0
+            analysis_results[category]["word_count"].append(count)
+            analysis_results[category]["word_perc"].append(word_perc)
+            analysis_results[category]["detected_words"].append(detected)
+
+        if (i + 1) % 100 == 0 or i == total_docs - 1:
+            progress_bar.progress((i + 1) / total_docs)
+
+    global_metrics = pd.DataFrame({"n_tokens": n_tokens_list, "n_types": n_types_list})
+
+    category_metrics = {}
+    for category, metrics in analysis_results.items():
+        category_metrics[f"{category}_word_count"] = metrics["word_count"]
+        category_metrics[f"{category}_word_perc"] = metrics["word_perc"]
+        category_metrics[f"{category}_detected_words"] = metrics["detected_words"]
+
+    category_metrics_df = pd.DataFrame(category_metrics)
+    analysis_df = pd.concat([global_metrics, category_metrics_df], axis=1)
+    return analysis_df

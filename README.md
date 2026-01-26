@@ -102,9 +102,24 @@ The application is especially useful for researchers and educators in the social
 
 ```
 .
-├── requirements.txt        # Lists required Python packages.
-├── wordcount.py            # Main Streamlit application code.
-└── README.md               # This file.
+├── app/                         # Single-purpose modules for data, UI, and analysis.
+│   ├── __init__.py
+│   ├── data_io.py
+│   ├── enhance.py
+│   ├── plots.py
+│   ├── stats_ui.py
+│   ├── summary.py
+│   ├── text_analysis.py
+│   ├── ui_controls.py
+│   ├── ui_footer.py
+│   ├── ui_intro.py
+│   ├── ui_preview.py
+│   ├── ui_results.py
+│   ├── ui_stats.py
+│   └── ui_uploads.py
+├── requirements.txt             # Lists required Python packages.
+├── wordcount.py                 # Streamlit app entrypoint.
+└── README.md                    # This file.
 ```
 
 ---
