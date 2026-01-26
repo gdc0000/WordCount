@@ -1,6 +1,10 @@
-import streamlit as st
-import pandas as pd
+from pathlib import Path
 from typing import Dict, List, Tuple
+
+import pandas as pd
+import streamlit as st
+
+from .naming import sanitize_identifier, uniquify
 
 
 @st.cache_data
@@ -83,3 +87,52 @@ def load_wordlist(
     except Exception as exc:
         st.error(f"Error loading wordlist: {exc}")
         return None, None, None, None
+
+
+def load_wordlists(
+    uploaded_files,
+    prefixes: Dict[str, str],
+) -> Tuple[Dict[str, set], Dict[str, List[str]], Dict[str, set], Dict[str, List[str]], List[Tuple[str, Dict, Dict]]]:
+    combined_exact_single: Dict[str, set] = {}
+    combined_wildcard_single: Dict[str, List[str]] = {}
+    combined_exact_multi: Dict[str, set] = {}
+    combined_wildcard_multi: Dict[str, List[str]] = {}
+    summaries: List[Tuple[str, Dict, Dict]] = []
+    existing = set()
+
+    for uploaded_file in uploaded_files:
+        exact_single, wildcard_single, exact_multi, wildcard_multi = load_wordlist(uploaded_file)
+        if any(item is None for item in (exact_single, wildcard_single, exact_multi, wildcard_multi)):
+            continue
+
+        stem = Path(uploaded_file.name).stem
+        prefix = prefixes.get(uploaded_file.name, stem)
+        prefix = sanitize_identifier(prefix or stem)
+
+        renamed_single = {}
+        renamed_multi = {}
+
+        for category in exact_single.keys():
+            safe_category = sanitize_identifier(category)
+            combined_name = f"{prefix}_{safe_category}" if prefix else safe_category
+            combined_name = sanitize_identifier(combined_name)
+            combined_name = uniquify(combined_name, existing)
+            existing.add(combined_name)
+
+            combined_exact_single[combined_name] = exact_single[category]
+            combined_wildcard_single[combined_name] = wildcard_single[category]
+            combined_exact_multi[combined_name] = exact_multi[category]
+            combined_wildcard_multi[combined_name] = wildcard_multi[category]
+
+            renamed_single[combined_name] = exact_single[category]
+            renamed_multi[combined_name] = exact_multi[category]
+
+        summaries.append((prefix, renamed_single, renamed_multi))
+
+    return (
+        combined_exact_single,
+        combined_wildcard_single,
+        combined_exact_multi,
+        combined_wildcard_multi,
+        summaries,
+    )

@@ -1,16 +1,17 @@
 import streamlit as st
 
-from app.data_io import load_dataset, load_wordlist
+from app.data_io import load_dataset, load_wordlists
 from app.enhance import enhance_dataset
 from app.text_analysis import analyze_text
 from app.ui_controls import (
     render_category_selector,
     render_start_analysis_button,
     render_text_column_selector,
+    render_wordlist_prefixes,
 )
 from app.ui_footer import add_footer
 from app.ui_intro import render_intro
-from app.ui_preview import render_dataset_preview, render_wordlist_summary
+from app.ui_preview import render_dataset_preview, render_wordlists_summary
 from app.ui_results import render_results
 from app.ui_stats import render_stats_section
 from app.ui_uploads import render_upload_section
@@ -32,22 +33,26 @@ def main():
     _ensure_session_state()
     render_intro()
 
-    uploaded_dataset, uploaded_wordlist = render_upload_section()
+    uploaded_dataset, uploaded_wordlists = render_upload_section()
 
-    if uploaded_dataset and uploaded_wordlist:
+    if uploaded_dataset and uploaded_wordlists:
         dataset = load_dataset(uploaded_dataset)
-        wordlist = load_wordlist(uploaded_wordlist)
+        if dataset is None:
+            add_footer()
+            return
 
-        if dataset is not None and all(item is not None for item in wordlist):
-            (
-                exact_single_words,
-                wildcard_single_prefixes,
-                exact_multi_words,
-                wildcard_multi_prefixes,
-            ) = wordlist
+        prefixes = render_wordlist_prefixes(uploaded_wordlists)
+        (
+            exact_single_words,
+            wildcard_single_prefixes,
+            exact_multi_words,
+            wildcard_multi_prefixes,
+            summaries,
+        ) = load_wordlists(uploaded_wordlists, prefixes)
 
+        if exact_single_words:
             render_dataset_preview(dataset)
-            render_wordlist_summary(exact_single_words, exact_multi_words)
+            render_wordlists_summary(summaries)
 
             selected_categories = render_category_selector(list(exact_single_words.keys()))
             st.session_state.selected_categories = selected_categories
@@ -86,6 +91,8 @@ def main():
                         st.session_state.enhanced_dataset = enhanced_dataset
                         st.session_state.analysis_done = True
                         st.success("? Textual Analysis Completed!")
+        else:
+            st.error("No valid wordlists loaded. Please check your files.")
 
     if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
         render_results(st.session_state.enhanced_dataset, st.session_state.selected_categories)
