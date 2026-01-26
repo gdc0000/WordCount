@@ -2,7 +2,7 @@ import streamlit as st
 
 from app.data_io import load_dataset, load_wordlists
 from app.enhance import enhance_dataset
-from app.text_analysis import analyze_text
+from app.text_analysis import analyze_text_cached, normalize_wordlists_for_cache
 from app.ui_controls import (
     render_category_selector,
     render_start_analysis_button,
@@ -27,6 +27,16 @@ def _ensure_session_state():
         st.session_state.enhanced_dataset = None
     if "selected_categories" not in st.session_state:
         st.session_state.selected_categories = None
+    if "wordlists_bundle" not in st.session_state:
+        st.session_state.wordlists_bundle = None
+    if "wordlists_key" not in st.session_state:
+        st.session_state.wordlists_key = None
+
+
+def _wordlists_key(uploaded_wordlists, prefixes):
+    return tuple(
+        sorted((uploaded_file.name, prefixes.get(uploaded_file.name, "")) for uploaded_file in uploaded_wordlists)
+    )
 
 
 def main():
@@ -41,58 +51,63 @@ def main():
             add_footer()
             return
 
-        prefixes = render_wordlist_prefixes(uploaded_wordlists)
-        (
-            exact_single_words,
-            wildcard_single_prefixes,
-            exact_multi_words,
-            wildcard_multi_prefixes,
-            summaries,
-        ) = load_wordlists(uploaded_wordlists, prefixes)
+        prefixes, submitted = render_wordlist_prefixes(uploaded_wordlists)
+        if submitted:
+            st.session_state.wordlists_bundle = load_wordlists(uploaded_wordlists, prefixes)
+            st.session_state.wordlists_key = _wordlists_key(uploaded_wordlists, prefixes)
 
-        if exact_single_words:
-            render_dataset_preview(dataset)
-            render_wordlists_summary(summaries)
+        if st.session_state.wordlists_bundle:
+            (
+                exact_single_words,
+                wildcard_single_prefixes,
+                exact_multi_words,
+                wildcard_multi_prefixes,
+                summaries,
+            ) = st.session_state.wordlists_bundle
 
-            selected_categories = render_category_selector(list(exact_single_words.keys()))
-            st.session_state.selected_categories = selected_categories
+            if exact_single_words:
+                render_dataset_preview(dataset)
+                render_wordlists_summary(summaries)
 
-            if selected_categories:
-                text_column = render_text_column_selector(dataset)
-                if text_column and render_start_analysis_button():
-                    with st.spinner(
-                        "?? Performing Textual Analysis... This may take a while for large datasets."
-                    ):
-                        documents = dataset[text_column].astype(str)
-                        progress_bar = st.progress(0)
+                selected_categories = render_category_selector(list(exact_single_words.keys()))
+                st.session_state.selected_categories = selected_categories
 
-                        selected_exact_single = {
-                            cat: exact_single_words[cat] for cat in selected_categories
-                        }
-                        selected_wildcard_single = {
-                            cat: wildcard_single_prefixes[cat] for cat in selected_categories
-                        }
-                        selected_exact_multi = {
-                            cat: exact_multi_words[cat] for cat in selected_categories
-                        }
-                        selected_wildcard_multi = {
-                            cat: wildcard_multi_prefixes[cat] for cat in selected_categories
-                        }
+                if selected_categories:
+                    text_column = render_text_column_selector(dataset)
+                    if text_column and render_start_analysis_button():
+                        with st.spinner(
+                            "?? Performing Textual Analysis... This may take a while for large datasets."
+                        ):
+                            documents = dataset[text_column].astype(str).tolist()
 
-                        analysis_df = analyze_text(
-                            documents,
-                            selected_exact_single,
-                            selected_wildcard_single,
-                            selected_exact_multi,
-                            selected_wildcard_multi,
-                            progress_bar,
-                        )
-                        enhanced_dataset = enhance_dataset(dataset, analysis_df)
-                        st.session_state.enhanced_dataset = enhanced_dataset
-                        st.session_state.analysis_done = True
-                        st.success("? Textual Analysis Completed!")
+                            selected_exact_single = {
+                                cat: exact_single_words[cat] for cat in selected_categories
+                            }
+                            selected_wildcard_single = {
+                                cat: wildcard_single_prefixes[cat] for cat in selected_categories
+                            }
+                            selected_exact_multi = {
+                                cat: exact_multi_words[cat] for cat in selected_categories
+                            }
+                            selected_wildcard_multi = {
+                                cat: wildcard_multi_prefixes[cat] for cat in selected_categories
+                            }
+
+                            normalized = normalize_wordlists_for_cache(
+                                selected_exact_single,
+                                selected_wildcard_single,
+                                selected_exact_multi,
+                                selected_wildcard_multi,
+                            )
+                            analysis_df = analyze_text_cached(documents, *normalized)
+                            enhanced_dataset = enhance_dataset(dataset, analysis_df)
+                            st.session_state.enhanced_dataset = enhanced_dataset
+                            st.session_state.analysis_done = True
+                            st.success("? Textual Analysis Completed!")
+            else:
+                st.error("No valid wordlists loaded. Please check your files.")
         else:
-            st.error("No valid wordlists loaded. Please check your files.")
+            st.info("Apply prefixes to load your wordlists.")
 
     if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
         render_results(st.session_state.enhanced_dataset, st.session_state.selected_categories)

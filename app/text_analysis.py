@@ -2,6 +2,7 @@ import re
 from typing import Dict, List, Tuple
 
 import pandas as pd
+import streamlit as st
 
 
 def clean_and_tokenize(document: str, max_n: int = 5) -> Tuple[List[str], List[str]]:
@@ -54,17 +55,14 @@ def count_words(
     return count, list(detected_words)
 
 
-def analyze_text(
-    documents: pd.Series,
+def _analyze_text_core(
+    documents: List[str],
     exact_single_words: Dict[str, set],
     wildcard_single_prefixes: Dict[str, List[str]],
     exact_multi_words: Dict[str, set],
     wildcard_multi_prefixes: Dict[str, List[str]],
     progress_bar,
 ) -> pd.DataFrame:
-    """
-    Analyze text in documents using multiple wordlists.
-    """
     n_tokens_list = []
     n_types_list = []
 
@@ -99,7 +97,7 @@ def analyze_text(
             analysis_results[category]["word_perc"].append(word_perc)
             analysis_results[category]["detected_words"].append(detected)
 
-        if (i + 1) % 100 == 0 or i == total_docs - 1:
+        if progress_bar and ((i + 1) % 200 == 0 or i == total_docs - 1):
             progress_bar.progress((i + 1) / total_docs)
 
     global_metrics = pd.DataFrame({"n_tokens": n_tokens_list, "n_types": n_types_list})
@@ -113,3 +111,70 @@ def analyze_text(
     category_metrics_df = pd.DataFrame(category_metrics)
     analysis_df = pd.concat([global_metrics, category_metrics_df], axis=1)
     return analysis_df
+
+
+def _normalize_wordlists_for_cache(
+    exact_single_words: Dict[str, set],
+    wildcard_single_prefixes: Dict[str, List[str]],
+    exact_multi_words: Dict[str, set],
+    wildcard_multi_prefixes: Dict[str, List[str]],
+) -> Tuple[Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]]]:
+    exact_single_norm = {k: tuple(sorted(v)) for k, v in exact_single_words.items()}
+    wildcard_single_norm = {k: tuple(v) for k, v in wildcard_single_prefixes.items()}
+    exact_multi_norm = {k: tuple(sorted(v)) for k, v in exact_multi_words.items()}
+    wildcard_multi_norm = {k: tuple(v) for k, v in wildcard_multi_prefixes.items()}
+    return exact_single_norm, wildcard_single_norm, exact_multi_norm, wildcard_multi_norm
+
+
+@st.cache_data
+def analyze_text_cached(
+    documents: List[str],
+    exact_single_words_norm: Dict[str, Tuple[str, ...]],
+    wildcard_single_prefixes_norm: Dict[str, Tuple[str, ...]],
+    exact_multi_words_norm: Dict[str, Tuple[str, ...]],
+    wildcard_multi_prefixes_norm: Dict[str, Tuple[str, ...]],
+) -> pd.DataFrame:
+    exact_single_words = {k: set(v) for k, v in exact_single_words_norm.items()}
+    wildcard_single_prefixes = {k: list(v) for k, v in wildcard_single_prefixes_norm.items()}
+    exact_multi_words = {k: set(v) for k, v in exact_multi_words_norm.items()}
+    wildcard_multi_prefixes = {k: list(v) for k, v in wildcard_multi_prefixes_norm.items()}
+    return _analyze_text_core(
+        documents,
+        exact_single_words,
+        wildcard_single_prefixes,
+        exact_multi_words,
+        wildcard_multi_prefixes,
+        progress_bar=None,
+    )
+
+
+def analyze_text(
+    documents: List[str],
+    exact_single_words: Dict[str, set],
+    wildcard_single_prefixes: Dict[str, List[str]],
+    exact_multi_words: Dict[str, set],
+    wildcard_multi_prefixes: Dict[str, List[str]],
+    progress_bar,
+) -> pd.DataFrame:
+    return _analyze_text_core(
+        documents,
+        exact_single_words,
+        wildcard_single_prefixes,
+        exact_multi_words,
+        wildcard_multi_prefixes,
+        progress_bar,
+    )
+
+
+def normalize_wordlists_for_cache(
+    exact_single_words: Dict[str, set],
+    wildcard_single_prefixes: Dict[str, List[str]],
+    exact_multi_words: Dict[str, set],
+    wildcard_multi_prefixes: Dict[str, List[str]],
+):
+    return _normalize_wordlists_for_cache(
+        exact_single_words,
+        wildcard_single_prefixes,
+        exact_multi_words,
+        wildcard_multi_prefixes,
+    )
