@@ -8,14 +8,20 @@ def enhance_dataset(dataset: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.Data
     dataset = dataset.reset_index(drop=True)
     enhanced_dataset = pd.concat([dataset, analysis_df], axis=1)
 
+    # pandas >= 2.1 renamed DataFrame.applymap to DataFrame.map, and pandas 3 removed applymap.
+    if hasattr(enhanced_dataset, "map"):
+        elementwise = enhanced_dataset.map
+    else:
+        elementwise = enhanced_dataset.applymap
+
     list_columns = enhanced_dataset.columns[
-        enhanced_dataset.applymap(lambda x: isinstance(x, list)).any()
+        elementwise(lambda x: isinstance(x, list)).any()
     ]
     dict_columns = enhanced_dataset.columns[
-        enhanced_dataset.applymap(lambda x: isinstance(x, dict)).any()
+        elementwise(lambda x: isinstance(x, dict)).any()
     ]
     set_columns = enhanced_dataset.columns[
-        enhanced_dataset.applymap(lambda x: isinstance(x, set)).any()
+        elementwise(lambda x: isinstance(x, set)).any()
     ]
 
     def convert_to_string(value):
