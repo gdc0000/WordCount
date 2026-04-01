@@ -25,6 +25,8 @@ def _ensure_session_state():
         st.session_state.analysis_done = False
     if "enhanced_dataset" not in st.session_state:
         st.session_state.enhanced_dataset = None
+    if "selected_text_column" not in st.session_state:
+        st.session_state.selected_text_column = None
     if "selected_categories" not in st.session_state:
         st.session_state.selected_categories = None
     if "wordlists_bundle" not in st.session_state:
@@ -74,6 +76,7 @@ def main():
 
                 if selected_categories:
                     text_column = render_text_column_selector(dataset)
+                    st.session_state.selected_text_column = text_column
                     if text_column and render_start_analysis_button():
                         with st.spinner(
                             "?? Performing Textual Analysis... This may take a while for large datasets."
@@ -110,7 +113,11 @@ def main():
             st.info("Apply prefixes to load your wordlists.")
 
     if st.session_state.analysis_done and st.session_state.enhanced_dataset is not None:
-        render_results(st.session_state.enhanced_dataset, st.session_state.selected_categories)
+        render_results(
+            st.session_state.enhanced_dataset,
+            st.session_state.selected_categories,
+            st.session_state.selected_text_column,
+        )
         render_stats_section(st.session_state.enhanced_dataset)
 
     add_footer()
