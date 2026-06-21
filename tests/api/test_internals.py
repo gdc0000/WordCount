@@ -19,6 +19,7 @@ import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from tests.api.conftest import (
     DATASET_CSV,
     WORDLIST_CSV,
@@ -27,7 +28,6 @@ from tests.api.conftest import (
     upload_dataset,
     upload_wordlist,
 )
-
 from wordcount.api import app as app_module
 from wordcount.api.deps import get_job_runner, get_job_store, get_settings
 from wordcount.api.errors import register_exception_handlers

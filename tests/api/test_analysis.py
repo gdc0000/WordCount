@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 from starlette.testclient import TestClient
+
 from tests.api.conftest import (
     DATASET_CSV,
     WORDLIST_CSV,
@@ -15,7 +16,6 @@ from tests.api.conftest import (
     upload_dataset,
     upload_wordlist,
 )
-
 from wordcount.api.app import create_app
 from wordcount.api.deps import get_job_runner, get_job_store, get_settings
 from wordcount.api.routers import analysis as analysis_route

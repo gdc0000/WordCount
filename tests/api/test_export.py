@@ -7,6 +7,7 @@ import io
 import httpx
 import pandas as pd
 import pytest
+
 from tests.api.conftest import (
     DATASET_CSV,
     WORDLIST_CSV,
