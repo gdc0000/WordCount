@@ -91,7 +91,18 @@ strict = true
 files = ["src/wordcount"]
 
 [[tool.mypy.overrides]]
-module = ["pandas.*", "plotly.*", "statsmodels.*", "pyarrow.*", "scipy.*"]
+module = [
+    "pandas.*",
+    "plotly.*",
+    "statsmodels.*",
+    "pyarrow.*",
+    "scipy.*",
+    "fastapi.*",
+    "starlette.*",
+    "pydantic_settings.*",
+    "uvicorn.*",
+    "multipart.*",
+]
 ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- #
@@ -114,4 +125,7 @@ filterwarnings = [
     # is removed in Phase 9. (Not present in CI, which installs no `[legacy]`.)
     "ignore:No runtime found:UserWarning",
     "ignore:Thread 'MainThread':UserWarning",
+    # Newer starlette prefers httpx2 but we pin httpx; its import-time fallback
+    # to httpx is fine for TestClient. Ignore the deprecation so collection works.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
 ]
