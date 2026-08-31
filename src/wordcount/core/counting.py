@@ -12,6 +12,11 @@ not types. Before, the exact branch iterated unique tokens and did ``+= 1``
 count 3. ``category_detected[cat][term]`` carries the occurrence count, so
 plots/export never re-split a joined string (fixes §2.2 at the source).
 
+**LIWC dedup.** One token occurrence is credited to a category at most once,
+even when it matches several entries of that category (exact + wildcard, or
+overlapping wildcards) — the LIWC2007 manual flags double counting as NOT OK.
+Matches in *different* categories still each count.
+
 The trie (``_build_prefix_trie`` / ``_match_prefix_categories``) and the
 reverse-lookup build are ported **unchanged in algorithm** from the ``ace8366``
 refactor of ``app/text_analysis.py`` — the audit (§5.2/§5.3, §10) praised them
@@ -35,22 +40,65 @@ The dead ``count_words`` from the legacy module is **not** ported.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor
-from functools import lru_cache
+from functools import lru_cache, partial
 from types import MappingProxyType
 from typing import Any
 
 import pandas as pd
 
 from wordcount.core.models import AnalysisConfig, DocumentCounts, Wordlist
-from wordcount.core.tokenize import DEFAULT_MAX_N, MIN_NGRAM_LENGTH, generate_ngrams, tokenize
+from wordcount.core.tokenize import (
+    DEFAULT_MAX_N,
+    MIN_NGRAM_LENGTH,
+    generate_candidate_ngrams,
+    tokenize,
+)
 
 #: Trie node key marking "the prefixes ending here belong to these categories".
 #: Ported verbatim from the ``ace8366`` refactor.
 _TRIE_TERMINAL = "_categories_"
 
 Trie = dict[str, Any]
+
+
+class _CachedTrie:
+    """Memoizing wrapper around a prefix trie (pure perf; behavior-identical).
+
+    Wildcard matching walks the trie per *distinct* term; across a corpus the
+    same terms recur in many documents, so results are cached per wrapper
+    instance (one wrapper per :class:`AnalysisConfig`, which is itself cached).
+    Memory is bounded by the distinct terms actually seen. ``__eq__`` and
+    ``__bool__`` delegate to the wrapped dict so existing comparisons (and the
+    ``has_wildcards`` property) keep working.
+    """
+
+    __slots__ = ("_cache", "_trie")
+
+    def __init__(self, trie: Trie) -> None:
+        self._trie = trie
+        self._cache: dict[str, list[str]] = {}
+
+    def match(self, term: str) -> list[str]:
+        cached = self._cache.get(term)
+        if cached is None:
+            cached = _match_prefix_categories(term, self._trie)
+            self._cache[term] = cached
+        return cached
+
+    def __bool__(self) -> bool:
+        return bool(self._trie)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _CachedTrie):
+            other = other._trie
+        return self._trie == other
+
+    __hash__ = None  # type: ignore[assignment]  # unhashable by design
+
+    def __repr__(self) -> str:
+        return f"_CachedTrie({self._trie!r})"
 
 
 # --------------------------------------------------------------------------- #
@@ -107,6 +155,7 @@ def _build_analysis_config_cached(wordlists: tuple[Wordlist, ...], max_n: int) -
     wildcard_single_p2c: dict[str, list[str]] = defaultdict(list)
     wildcard_multi_p2c: dict[str, list[str]] = defaultdict(list)
     required_ngram_lengths: set[int] = set()
+    multi_first_words: set[str] = set()
 
     for wl in wordlists:
         for cat_name, terms in wl.categories:
@@ -120,6 +169,7 @@ def _build_analysis_config_cached(wordlists: tuple[Wordlist, ...], max_n: int) -
                 length = len(term.split())
                 if MIN_NGRAM_LENGTH <= length <= max_n:
                     required_ngram_lengths.add(length)
+                multi_first_words.add(term.split()[0])
 
             for prefix in terms.wildcard_single:
                 if prefix:
@@ -136,6 +186,7 @@ def _build_analysis_config_cached(wordlists: tuple[Wordlist, ...], max_n: int) -
                 length = len(prefix.split())
                 if 1 <= length <= max_n:
                     required_ngram_lengths.update(range(max(MIN_NGRAM_LENGTH, length), max_n + 1))
+                multi_first_words.add(prefix.split()[0])
 
     categories = tuple(dict.fromkeys(category_order))
 
@@ -147,10 +198,11 @@ def _build_analysis_config_cached(wordlists: tuple[Wordlist, ...], max_n: int) -
         exact_multi_lookup=MappingProxyType(
             {t: tuple(cats) for t, cats in exact_multi_lookup.items()}
         ),
-        wildcard_single_trie=_build_prefix_trie(wildcard_single_p2c),
-        wildcard_multi_trie=_build_prefix_trie(wildcard_multi_p2c),
+        wildcard_single_trie=_CachedTrie(_build_prefix_trie(wildcard_single_p2c)),
+        wildcard_multi_trie=_CachedTrie(_build_prefix_trie(wildcard_multi_p2c)),
         required_ngram_lengths=tuple(sorted(required_ngram_lengths)),
         max_n=max_n,
+        multi_first_words=frozenset(multi_first_words),
     )
 
 
@@ -178,7 +230,7 @@ def build_analysis_config(
 def _accumulate(
     term_counter: Counter[str],
     exact_lookup: Mapping[str, tuple[str, ...]],
-    wildcard_trie: Trie,
+    wildcard_trie: _CachedTrie,
     category_counts: dict[str, int],
     category_detected: dict[str, dict[str, int]],
 ) -> None:
@@ -187,15 +239,34 @@ def _accumulate(
     Exact and wildcard branches both add **occurrences** (fixes §2.1) and both
     record ``{term: occ}`` in ``category_detected`` (fixes §2.2 at the source).
     Used once for unigrams and once for n-grams.
+
+    LIWC dedup: a single token occurrence is counted **at most once per
+    category**, even when it matches several entries of that category (exact +
+    wildcard, or two overlapping wildcards). The LIWC2007 Operator's Manual
+    flags the double count ("Thank* 27" + "Thanksgiving 27") as NOT OK.
+    Matching multiple *different* categories still credits each of them.
     """
+    match = wildcard_trie.match if wildcard_trie else None
     for term, occ in term_counter.items():
-        for cat in exact_lookup.get(term, ()):
+        exact = exact_lookup.get(term)
+        wild = match(term) if match is not None else ()
+        if not exact and not wild:
+            continue
+        if exact and wild:
+            merged: set[str] = set(exact)
+            merged.update(wild)
+            cats: Iterable[str] = merged
+        elif exact:
+            cats = exact
+        elif len(wild) > 1:
+            # Wildcard lists can repeat a category (overlapping prefixes) —
+            # the LIWC dedup applies to the wildcard-only path too.
+            cats = set(wild)
+        else:
+            cats = wild
+        for cat in cats:
             category_counts[cat] += occ
             category_detected[cat][term] = occ
-        if wildcard_trie:
-            for cat in _match_prefix_categories(term, wildcard_trie):
-                category_counts[cat] += occ
-                category_detected[cat][term] = occ
 
 
 def count_document(document: object, config: AnalysisConfig) -> DocumentCounts:
@@ -212,29 +283,39 @@ def count_document(document: object, config: AnalysisConfig) -> DocumentCounts:
 
     tokens = tokenize(document)
     n_tokens = len(tokens)
-    n_types = len(set(tokens))
 
     category_counts: dict[str, int] = {c: 0 for c in config.categories}
     category_detected: dict[str, dict[str, int]] = {c: {} for c in config.categories}
 
+    token_counter: Counter[str] | None = None
     if tokens:
+        token_counter = Counter(tokens)
         _accumulate(
-            Counter(tokens),
+            token_counter,
             config.exact_single_lookup,
             config.wildcard_single_trie,
             category_counts,
             category_detected,
         )
 
-    # N-grams (multi-word phrases).
+    # N-grams (multi-word phrases). Only windows whose first token can start a
+    # configured phrase/prefix are generated (perf filter — exact equivalence:
+    # a phrase can never match a window starting with any other word).
     if config.required_ngram_lengths and n_tokens >= MIN_NGRAM_LENGTH:
         _accumulate(
-            generate_ngrams(tokens, config.required_ngram_lengths),
+            generate_candidate_ngrams(
+                tokens, config.required_ngram_lengths, config.multi_first_words
+            ),
             config.exact_multi_lookup,
             config.wildcard_multi_trie,
             category_counts,
             category_detected,
         )
+
+    # Unique tokens (types) = distinct keys of the unigram Counter; computed
+    # from the Counter to skip a second pass over the token list. Documents
+    # with no tokens (or no n-grams) still report 0 types below.
+    n_types = len(token_counter) if token_counter is not None else 0
 
     return DocumentCounts(
         n_tokens=n_tokens,
@@ -249,6 +330,11 @@ def count_document(document: object, config: AnalysisConfig) -> DocumentCounts:
 # --------------------------------------------------------------------------- #
 # Batch analysis → DataFrame
 # --------------------------------------------------------------------------- #
+def _count_document_with(config: AnalysisConfig, document: str) -> DocumentCounts:
+    """Module-level worker so ``ProcessPoolExecutor`` can pickle the task (§5.5)."""
+    return count_document(document, config)
+
+
 def analyze_documents(
     documents: Sequence[str],
     config: AnalysisConfig,
@@ -267,6 +353,9 @@ def analyze_documents(
     ``executor`` (any ``concurrent.futures.Executor``) parallelizes the
     per-document work (§5.5); ``None`` runs serially. With an executor,
     ``executor.map`` preserves submission order, so ``completed`` is monotonic.
+    ``ProcessPoolExecutor`` requires the config and results to be picklable
+    (guaranteed via ``__reduce__`` on :class:`AnalysisConfig`/
+    :class:`DocumentCounts`); ``ThreadPoolExecutor`` shares them by reference.
     """
     docs = list(documents)
     total = len(docs)
@@ -274,11 +363,9 @@ def analyze_documents(
 
     completed = 0
 
-    def _work(index: int) -> tuple[int, DocumentCounts]:
-        return index, count_document(docs[index], config)
-
     if executor is not None:
-        for index, counts in executor.map(_work, range(total)):
+        worker = partial(_count_document_with, config)
+        for index, counts in enumerate(executor.map(worker, docs)):
             results[index] = counts
             completed += 1
             if progress is not None:

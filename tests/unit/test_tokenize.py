@@ -17,6 +17,7 @@ import pytest
 from wordcount.core.tokenize import (
     DEFAULT_MAX_N,
     clean_and_tokenize,
+    generate_candidate_ngrams,
     generate_ngrams,
     ngram_lengths_for,
     tokenize,
@@ -105,6 +106,37 @@ def test_generate_ngrams_skips_non_positive_lengths() -> None:
 
 def test_generate_ngrams_empty_tokens() -> None:
     assert generate_ngrams([], [2, 3]) == Counter()
+
+
+# --------------------------------------------------------------------------- #
+# generate_candidate_ngrams — first-word filtered generation (perf)
+# --------------------------------------------------------------------------- #
+def test_candidate_ngrams_equals_full_when_all_first_words() -> None:
+    """Filter with every possible first word = plain generate_ngrams."""
+    tokens = ["a", "b", "a", "b", "c"]
+    first = frozenset(tokens)
+    lengths = [2, 3]
+    assert generate_candidate_ngrams(tokens, lengths, first) == generate_ngrams(tokens, lengths)
+
+
+def test_candidate_ngrams_skips_windows_with_unknown_first_token() -> None:
+    """Windows not starting on a candidate word are never joined."""
+    tokens = ["x", "a", "b", "x", "a", "b", "c"]
+    # Only windows starting with "a" are generated: index 1 -> "a b", "a b x";
+    # index 4 -> "a b", "a b c". Windows starting with "x" are never joined.
+    got = generate_candidate_ngrams(tokens, [2, 3], frozenset({"a"}))
+    assert got == Counter({"a b": 2, "a b x": 1, "a b c": 1})
+
+
+def test_candidate_ngrams_empty_first_words_returns_empty() -> None:
+    tokens = ["a", "b", "c"]
+    assert generate_candidate_ngrams(tokens, [2, 3], frozenset()) == Counter()
+
+
+def test_candidate_ngrams_counts_duplicates() -> None:
+    tokens = ["new", "york", "new", "york"]
+    got = generate_candidate_ngrams(tokens, [2], frozenset({"new"}))
+    assert got == Counter({"new york": 2})
 
 
 # --------------------------------------------------------------------------- #
