@@ -12,7 +12,8 @@ streamlit, no fastapi.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import pickle
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import cast
 
 import pandas as pd
@@ -20,6 +21,7 @@ import pytest
 
 from wordcount.core.counting import (
     _build_prefix_trie,
+    _CachedTrie,
     _match_prefix_categories,
     analyze_documents,
     build_analysis_config,
@@ -134,6 +136,111 @@ def test_exact_equals_wildcard_ngram() -> None:
         == count_document(doc, wild).category_counts["Place"]
         == 2
     )
+
+
+# --------------------------------------------------------------------------- #
+# LIWC dedup — one token occurrence counts at most once per category
+# (LIWC2007 Operator's Manual: "Thank* 27" + "Thanksgiving 27" double counts,
+#  NOT OK. A token hitting several entries of the *same* category adds occ once;
+#  tokens in *different* categories are unaffected.)
+# --------------------------------------------------------------------------- #
+def test_liwc_dedup_exact_and_wildcard_same_category() -> None:
+    """'thanksgiving' matches exact entry AND 'thank*' in one category → 1."""
+    wl = Wordlist.from_mapping(
+        "wl",
+        {
+            "Thank": CategoryTerms(
+                exact_single=frozenset({"thanksgiving"}),
+                wildcard_single=("thank",),
+                exact_multi=frozenset(),
+                wildcard_multi=(),
+            )
+        },
+    )
+    counts = count_document("thanksgiving", _config([wl]))
+    assert counts.category_counts["Thank"] == 1
+
+
+def test_liwc_dedup_two_wildcards_same_category() -> None:
+    """'happy' matches both 'hap*' and 'happ*' in one category → 1."""
+    wl = _wordlist(wildcard_single=("hap", "happ"))
+    counts = count_document("happy", _config([wl]))
+    assert counts.category_counts["Affect"] == 1
+
+
+def test_liwc_dedup_still_counts_each_occurrence() -> None:
+    """Dedup is per (occurrence, category): each token occurrence adds 1 once."""
+    wl = Wordlist.from_mapping(
+        "wl",
+        {
+            "Thank": CategoryTerms(
+                exact_single=frozenset({"thanksgiving"}),
+                wildcard_single=("thank",),
+                exact_multi=frozenset(),
+                wildcard_multi=(),
+            )
+        },
+    )
+    counts = count_document("thanksgiving thanksgiving", _config([wl]))
+    assert counts.category_counts["Thank"] == 2
+
+
+def test_liwc_dedup_same_token_two_categories() -> None:
+    """'thanksgiving' in categories 27 and 94 → 1 in each (cross-cat untouched)."""
+    wl = Wordlist.from_mapping(
+        "wl",
+        {
+            "Thank": CategoryTerms(
+                exact_single=frozenset({"thanksgiving"}),
+                wildcard_single=(),
+                exact_multi=frozenset(),
+                wildcard_multi=(),
+            ),
+            "Holiday": CategoryTerms(
+                exact_single=frozenset({"thanksgiving"}),
+                wildcard_single=(),
+                exact_multi=frozenset(),
+                wildcard_multi=(),
+            ),
+        },
+    )
+    counts = count_document("thanksgiving", _config([wl]))
+    assert counts.category_counts["Thank"] == 1
+    assert counts.category_counts["Holiday"] == 1
+
+
+def test_liwc_dedup_ngram_exact_and_wildcard_same_category() -> None:
+    """'new york' matches exact phrase AND 'new *' in one category → 1 (max_n=2)."""
+    wl = Wordlist.from_mapping(
+        "wl",
+        {
+            "Place": CategoryTerms(
+                exact_single=frozenset(),
+                wildcard_single=(),
+                exact_multi=frozenset({"new york"}),
+                wildcard_multi=("new",),
+            )
+        },
+    )
+    counts = count_document("new york", _config([wl], max_n=2))
+    assert counts.category_counts["Place"] == 1
+
+
+def test_liwc_dedup_detected_words_unaffected() -> None:
+    """dedup changes the *count*, not the detected {term: occ} payload."""
+    wl = Wordlist.from_mapping(
+        "wl",
+        {
+            "Thank": CategoryTerms(
+                exact_single=frozenset({"thanksgiving"}),
+                wildcard_single=("thank",),
+                exact_multi=frozenset(),
+                wildcard_multi=(),
+            )
+        },
+    )
+    counts = count_document("thanksgiving thanksgiving", _config([wl]))
+    assert dict(counts.category_detected["Thank"]) == {"thanksgiving": 2}
 
 
 # --------------------------------------------------------------------------- #
@@ -273,6 +380,51 @@ def test_parallel_progress_monotonic() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# ProcessPool — config and results must survive pickling (§5.5)
+# --------------------------------------------------------------------------- #
+def test_config_pickle_roundtrip() -> None:
+    wl = _wordlist(
+        exact_single={"happy", "sad"},
+        wildcard_single=("happ",),
+        exact_multi={"new york"},
+        wildcard_multi=("new",),
+        category="Mixed",
+    )
+    config = _config([wl], max_n=3)
+    restored = pickle.loads(pickle.dumps(config))
+    doc = "happy happy new york city"
+    assert (
+        count_document(doc, config).category_counts == count_document(doc, restored).category_counts
+    )
+
+
+def test_document_counts_pickle_roundtrip() -> None:
+    counts = count_document("happy happy new york", _config([_wordlist(exact_single={"happy"})]))
+    restored = pickle.loads(pickle.dumps(counts))
+    assert restored.n_tokens == counts.n_tokens
+    assert restored.category_counts == counts.category_counts
+    assert restored.category_detected == counts.category_detected
+
+
+def test_processpool_matches_serial() -> None:
+    wl = _wordlist(
+        exact_single={"happy", "sad"},
+        wildcard_single=("happ",),
+        exact_multi={"new york"},
+        wildcard_multi=("new",),
+        category="Mixed",
+    )
+    config = _config([wl], max_n=3)
+    docs = ["happy happy sad", "new york new york happy", "nothing here at all", ""]
+
+    serial = analyze_documents(docs, config)
+    with ProcessPoolExecutor(max_workers=2) as ex:
+        parallel = analyze_documents(docs, config, executor=ex)
+
+    pd.testing.assert_frame_equal(serial, parallel)
+
+
+# --------------------------------------------------------------------------- #
 # Caching — build_analysis_config reuses one config for equal vocabulary
 # (replaces the plan's test_config_is_hashable: AnalysisConfig is intentionally
 #  NOT hashable because of its trie; the cache key is the hashable Wordlists.)
@@ -371,6 +523,38 @@ def test_match_prefix_categories_walks_terminal_nodes() -> None:
     assert _match_prefix_categories("happy", trie) == ["Affect", "Affect", "Mood"]
     # "nope" shares no prefix.
     assert _match_prefix_categories("nope", trie) == []
+
+
+# --------------------------------------------------------------------------- #
+# _CachedTrie — memoized wildcard matching (perf; behavior-identical wrapper)
+# --------------------------------------------------------------------------- #
+def test_cached_trie_matches_like_bare_trie() -> None:
+    trie = _build_prefix_trie({"ha": ["Affect"], "hap": ["Affect", "Mood"]})
+    box = _CachedTrie(trie)
+    assert box.match("happy") == ["Affect", "Affect", "Mood"]
+    assert box.match("nope") == []
+    # Repeated call hits the cache, same result.
+    assert box.match("happy") == ["Affect", "Affect", "Mood"]
+
+
+def test_cached_trie_bool_and_eq_delegate_to_dict() -> None:
+    empty = _CachedTrie({})
+    full = _CachedTrie({"h": {"_categories_": ["Affect"]}})
+    assert not empty
+    assert full
+    # Comparison against the plain dict (and against another wrapper) works,
+    # so config-level assertions like trie == {} keep working.
+    assert empty == {}
+    assert full == {"h": {"_categories_": ["Affect"]}}
+    assert full == _CachedTrie({"h": {"_categories_": ["Affect"]}})
+    assert empty != full
+
+
+def test_cached_trie_used_by_config() -> None:
+    config = _config([_wordlist(wildcard_single=("happ",))])
+    assert isinstance(config.wildcard_single_trie, _CachedTrie)
+    counts = count_document("happy happy happening", config)
+    assert counts.category_counts["Affect"] == 3
 
 
 def test_empty_wildcard_prefix_is_skipped() -> None:

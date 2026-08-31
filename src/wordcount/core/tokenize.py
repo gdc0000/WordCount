@@ -30,16 +30,22 @@ MIN_NGRAM_LENGTH: int = 2
 TOKEN_CLEAN_RE = re.compile(r"[^\w\s']")
 """Regex replacing non-``[\\w\\s']`` runs with a space before splitting."""
 
+TOKEN_WORD_RE = re.compile(r"[\w']+")
+"""Regex matching token runs (``[\\w']+``) directly — single-pass tokenization."""
+
 
 def tokenize(document: str) -> list[str]:
-    """Lowercase, strip non-``[\\w\\s']`` chars to spaces, split on whitespace.
+    """Lowercase and extract ``[\\w']+`` runs as tokens.
+
+    Equivalent to ``TOKEN_CLEAN_RE.sub(" ", doc).split()`` (punctuation runs
+    separate tokens) but single-pass: ``re.findall`` avoids building the
+    intermediate cleaned string.
 
     ``NaN``/``None`` are coerced via ``str()`` to ``"nan"``/``"none"`` by the
     caller's contract; the analysis loop in core/counting.py guards ``pd.isna``
     before calling this, so this function receives a real string.
     """
-    cleaned = TOKEN_CLEAN_RE.sub(" ", document.lower())
-    return cleaned.split()
+    return TOKEN_WORD_RE.findall(document.lower())
 
 
 def generate_ngrams(tokens: Sequence[str], lengths: Sequence[int]) -> Counter[str]:
@@ -47,7 +53,7 @@ def generate_ngrams(tokens: Sequence[str], lengths: Sequence[int]) -> Counter[st
 
     ``Counter`` (not a list) so duplicates collapse to frequencies and the
     matching layer can read occurrence counts directly — the basis for the
-    single token-frequency counting convention that fixes §2.1.
+    single token-frequency convention that fixes §2.1.
 
     Orders where ``n > len(tokens)`` are skipped silently.
     """
@@ -57,6 +63,30 @@ def generate_ngrams(tokens: Sequence[str], lengths: Sequence[int]) -> Counter[st
         if n > n_tokens or n < 1:
             continue
         ngram_counter.update(" ".join(tokens[i : i + n]) for i in range(n_tokens - n + 1))
+    return ngram_counter
+
+
+def generate_candidate_ngrams(
+    tokens: Sequence[str], lengths: Sequence[int], first_words: frozenset[str]
+) -> Counter[str]:
+    """Generate n-grams for windows whose **first token** is in ``first_words``.
+
+    Perf variant of :func:`generate_ngrams` for dictionary matching: a phrase
+    term or wildcard prefix can only match an n-gram whose first word matches
+    the term/prefix's first word, so windows starting with any other token are
+    skipped before the (expensive) ``join``. Passing *every* token as a
+    candidate reproduces :func:`generate_ngrams` exactly; an empty set returns
+    an empty Counter.
+    """
+    ngram_counter: Counter[str] = Counter()
+    n_tokens = len(tokens)
+    for n in lengths:
+        if n > n_tokens or n < 1:
+            continue
+        last = n_tokens - n + 1
+        for i in range(last):
+            if tokens[i] in first_words:
+                ngram_counter[" ".join(tokens[i : i + n])] += 1
     return ngram_counter
 
 
@@ -86,7 +116,9 @@ __all__ = [
     "DEFAULT_MAX_N",
     "MIN_NGRAM_LENGTH",
     "TOKEN_CLEAN_RE",
+    "TOKEN_WORD_RE",
     "clean_and_tokenize",
+    "generate_candidate_ngrams",
     "generate_ngrams",
     "ngram_lengths_for",
     "tokenize",

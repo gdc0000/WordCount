@@ -379,10 +379,10 @@ def test_loaded_wordlist_drives_counting(tmp_path: Path) -> None:
     counts = count_document("happy happy new york", config)
     # exact_single "happy" counts 2 occurrences (token frequency, §2.1 fix).
     # NOTE: the wordlist also has the wildcard prefix "happ" (from "happ*"),
-    # which additionally matches "happy" x2 — so Affect's total is 4. This
-    # overlap is the preserved legacy behavior: a term can be counted by both
-    # its exact and wildcard entries. Locks the double-count in.
-    assert counts.category_counts["wl_Affect"] == 4
-    # exact_multi "new york" x1 AND wildcard_multi "new" (from "new *") matches
-    # the "new york" n-gram x1 -> Place total is 2 (same overlap behavior).
-    assert counts.category_counts["wl_Place"] == 2
+    # which also matches "happy" x2 — but LIWC dedup counts a token occurrence
+    # at most once per category (LIWC2007 manual: overlapping entries in one
+    # category are NOT double counted). So Affect's total is 2, not 4.
+    assert counts.category_counts["wl_Affect"] == 2
+    # exact_multi "new york" x1 AND wildcard_multi "new" (from "new *") match
+    # the same "new york" n-gram occurrence -> deduped to 1 for Place.
+    assert counts.category_counts["wl_Place"] == 1

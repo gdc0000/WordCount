@@ -183,6 +183,29 @@ class AnalysisConfig:
     wildcard_multi_trie: Trie
     required_ngram_lengths: tuple[int, ...]
     max_n: int
+    #: First words of every multi term/prefix — the candidate filter for
+    #: n-gram generation (``core.tokenize.generate_candidate_ngrams``).
+    multi_first_words: frozenset[str] = frozenset()
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        """Pickle support for ``ProcessPoolExecutor`` (§5.5).
+
+        ``MappingProxyType`` is not picklable on CPython < 3.13, so the state
+        ships as plain dicts and the constructor re-wraps them on rebuild.
+        """
+        return (
+            self.__class__,
+            (
+                self.categories,
+                dict(self.exact_single_lookup),
+                dict(self.exact_multi_lookup),
+                self.wildcard_single_trie,
+                self.wildcard_multi_trie,
+                self.required_ngram_lengths,
+                self.max_n,
+                self.multi_first_words,
+            ),
+        )
 
     @property
     def has_wildcards(self) -> bool:
@@ -217,6 +240,22 @@ class DocumentCounts:
             n_types=0,
             category_counts=MappingProxyType({c: 0 for c in categories}),
             category_detected=MappingProxyType({c: MappingProxyType({}) for c in categories}),
+        )
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        """Pickle support for ``ProcessPoolExecutor`` (§5.5).
+
+        Ships plain dicts (``MappingProxyType`` is not picklable on CPython
+        < 3.13); the constructor re-wraps them on rebuild.
+        """
+        return (
+            self.__class__,
+            (
+                self.n_tokens,
+                self.n_types,
+                dict(self.category_counts),
+                {c: dict(d) for c, d in self.category_detected.items()},
+            ),
         )
 
 
